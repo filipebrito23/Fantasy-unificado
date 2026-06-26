@@ -262,7 +262,7 @@ def format_totals(df: pd.DataFrame, money_cols: list[str]) -> pd.DataFrame:
 user = require_login_v5()
 
 st.title("Elencos Fantasy NBA")
-st.caption("Transactions com domínio por time, seleção de players dos dois rosters e save robusto.")
+st.caption("Elencos 2026-27")
 
 if not DEFAULT_FILE.exists():
     st.error("Arquivo roster.xlsx não encontrado na pasta do projeto.")
@@ -360,5 +360,3 @@ dev_totals_display = format_money_columns(
     ["Salários", "Cap restante"],
 )
 st.dataframe(dev_totals_display, use_container_width=True, hide_index=True)
-
-st.info("Próxima etapa: incluir formulário de transactions e persistência no roster.xlsx.")
