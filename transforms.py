@@ -24,14 +24,23 @@ def _player_lookup(players_df: pd.DataFrame) -> pd.DataFrame:
     return players_df[cols].drop_duplicates(subset=["player_id"])
 
 
-def build_roster_view(roster_df: pd.DataFrame, players_df: pd.DataFrame, team_id: int, roster_type: str, visible_seasons: list[str]) -> pd.DataFrame:
+def build_roster_view(
+    roster_df: pd.DataFrame,
+    players_df: pd.DataFrame,
+    team_id: int,
+    roster_type: str,
+    visible_seasons: list[str],
+) -> pd.DataFrame:
     df = roster_df.loc[roster_df["team_id"] == team_id].copy()
     df = df.merge(_player_lookup(players_df), on="player_id", how="left")
+
     order_col = "pos_order" if "pos_order" in df.columns else "order"
     if order_col in df.columns:
         df = df.sort_values(order_col, na_position="last")
-    base_cols = [order_col, "player_id", "player_name", "position"]
+
+    base_cols = [order_col, "player_name", "position"]
     season_cols = []
+
     for season in visible_seasons:
         sal_col = f"salarie_{season}"
         opt_col = f"option_{season}"
@@ -39,25 +48,61 @@ def build_roster_view(roster_df: pd.DataFrame, players_df: pd.DataFrame, team_id
             season_cols.append(sal_col)
         if opt_col in df.columns:
             season_cols.append(opt_col)
+
     visible_cols = [c for c in [*base_cols, *season_cols] if c in df.columns]
     df = df[visible_cols].copy()
-    df.insert(0, "roster_type", roster_type)
+
     return df.reset_index(drop=True)
 
 
 def format_roster_for_display(df: pd.DataFrame, visible_seasons: list[str]) -> pd.DataFrame:
     out = df.copy()
+
     rename_map = {
-        "roster_type": "Tipo",
         "pos_order": "Ordem",
         "order": "Ordem",
-        "player_id": "Player ID",
         "player_name": "Jogador",
         "position": "Posição",
     }
+
     for season in visible_seasons:
         rename_map[f"salarie_{season}"] = SEASON_LABELS[season]
-    return out.rename(columns=rename_map)
+        rename_map[f"option_{season}"] = f"TO_{season}"
+
+    out = out.rename(columns=rename_map)
+    return out
+
+
+def summarize_positions(df: pd.DataFrame, position_col: str = "Posição") -> dict:
+    if df.empty or position_col not in df.columns:
+        return {}
+
+    counts = (
+        df[position_col]
+        .fillna("Sem posição")
+        .astype(str)
+        .str.strip()
+        .replace("", "Sem posição")
+        .value_counts()
+        .sort_index()
+        .to_dict()
+    )
+    return counts
+
+
+def summarize_picks_by_year(df: pd.DataFrame) -> dict:
+    if df.empty or "year" not in df.columns:
+        return {}
+
+    counts = (
+        df["year"]
+        .dropna()
+        .astype(int)
+        .value_counts()
+        .sort_index()
+        .to_dict()
+    )
+    return counts
 
 def build_picks_view(picks_df: pd.DataFrame, teams_df: pd.DataFrame, team_id: int) -> pd.DataFrame:
     if picks_df.empty:

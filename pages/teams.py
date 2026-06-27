@@ -7,14 +7,16 @@ from openpyxl import load_workbook
 from data_loader import load_workbook_data, SEASONS
 from transforms import (
     SEASON_LABELS,
+    build_picks_view,
+    format_picks_for_display,
     get_team_options,
     get_visible_seasons,
     build_roster_view,
     format_roster_for_display,
     calculate_main_totals,
     calculate_dev_totals,
-    build_picks_view,
-    format_picks_for_display,
+    summarize_positions,
+    summarize_picks_by_year,
 )
 
 DEFAULT_FILE = Path("roster.xlsx")
@@ -35,11 +37,15 @@ def cached_load(file_path: str):
 
 
 def currency(v) -> str:
-    if pd.isna(v):
+    if v is None or (isinstance(v, str) and not v.strip()):
         return "-"
-    s = f"{v:,.2f}"
-    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"US$ {s}"
+
+    n = pd.to_numeric(pd.Series([v]), errors="coerce").iloc[0]
+
+    if pd.isna(n):
+        return str(v)
+
+    return f"US$ {float(n):,.2f}"
 
 
 def format_salary_columns(df: pd.DataFrame, visible_seasons: list[str]) -> pd.DataFrame:
@@ -340,34 +346,80 @@ dev_totals = calculate_dev_totals(dev_team_df, visible_seasons)
 picks_team_df = build_picks_view(data["picks"], data["teams"], selected_team_id)
 picks_display = format_picks_for_display(picks_team_df)
 
+main_position_counts = summarize_positions(main_roster)
+dev_position_counts = summarize_positions(dev_roster)
 
-st.subheader("Elenco principal")
-display_main = build_red_flags(main_roster, visible_seasons)
-display_main = format_salary_columns(display_main, visible_seasons)
-display_table(display_main)
+main_positions_text = " | ".join([f"{pos}: {qty}" for pos, qty in main_position_counts.items()]) if main_position_counts else "-"
+dev_positions_text = " | ".join([f"{pos}: {qty}" for pos, qty in dev_position_counts.items()]) if dev_position_counts else "-"
 
-st.subheader("Totalizadores do elenco principal")
-main_totals_display = format_money_columns(
-    main_totals,
-    ["Salários", "Multas", "Cap restante"],
-)
-st.dataframe(main_totals_display, use_container_width=True, hide_index=True)
+team_picks_df = picks_df.loc[picks_df["current_team_owner_id"] == selected_team_id].copy() if not picks_df.empty else pd.DataFrame()
+pick_year_counts = summarize_picks_by_year(team_picks_df)
 
-st.subheader("Liga de desenvolvimento")
-display_dev = build_red_flags(dev_roster, visible_seasons)
-display_dev = format_salary_columns(display_dev, visible_seasons)
-display_table(display_dev)
+st.subheader(f"Elencos - {selected_team_name}")
 
-st.subheader("Totalizadores da development")
-dev_totals_display = format_money_columns(
-    dev_totals,
-    ["Salários", "Cap restante"],
-)
-st.dataframe(dev_totals_display, use_container_width=True, hide_index=True)
+tab_main, tab_dev, tab_picks = st.tabs(["Principal", "Development", "Picks"])
 
-st.subheader("Picks")
+with tab_main:
+    c1, c2, c3, c4 = st.columns(4)
+    if not main_totals.empty:
+        current_main = main_totals.iloc[0].to_dict()
+        c1.metric("Jogadores", len(main_roster))
+        c2.metric("Salários", currency(current_main.get("Salários", 0.0)))
+        c3.metric("Multas", currency(current_main.get("Multas", 0.0)))
+        c4.metric("Cap restante", currency(current_main.get("Cap restante", 0.0)))
 
-if picks_display.empty:
-    st.info("Esse time não possui picks cadastradas.")
-else:
-    st.dataframe(picks_display, use_container_width=True, hide_index=True)
+    st.caption(f"Posições: {main_positions_text}")
+
+    display_main = build_red_flags(main_roster, visible_seasons)
+    for season in visible_seasons:
+        label = SEASON_LABELS[season]
+        if label in display_main.columns:
+            display_main[label] = display_main[label].apply(currency)
+
+    st.dataframe(display_main, use_container_width=True, hide_index=True)
+
+    with st.expander("Totalizadores do elenco principal", expanded=False):
+        main_totals_display = main_totals.copy()
+        for col in ["Salários", "Multas", "Cap restante"]:
+            if col in main_totals_display.columns:
+                main_totals_display[col] = main_totals_display[col].apply(currency)
+        st.dataframe(main_totals_display, use_container_width=True, hide_index=True)
+
+with tab_dev:
+    c1, c2, c3 = st.columns(3)
+    if not dev_totals.empty:
+        current_dev = dev_totals.iloc[0].to_dict()
+        c1.metric("Jogadores", len(dev_roster))
+        c2.metric("Salários", currency(current_dev.get("Salários", 0.0)))
+        c3.metric("Cap restante", currency(current_dev.get("Cap restante", 0.0)))
+
+    st.caption(f"Posições: {dev_positions_text}")
+
+    display_dev = build_red_flags(dev_roster, visible_seasons)
+    for season in visible_seasons:
+        label = SEASON_LABELS[season]
+        if label in display_dev.columns:
+            display_dev[label] = display_dev[label].apply(currency)
+
+    st.dataframe(display_dev, use_container_width=True, hide_index=True)
+
+    with st.expander("Totalizadores da development", expanded=False):
+        dev_totals_display = dev_totals.copy()
+        for col in ["Salários", "Cap restante"]:
+            if col in dev_totals_display.columns:
+                dev_totals_display[col] = dev_totals_display[col].apply(currency)
+        st.dataframe(dev_totals_display, use_container_width=True, hide_index=True)
+
+with tab_picks:
+    total_picks = len(team_picks_df)
+
+    if team_picks_df.empty:
+        st.info("Esse time não possui picks cadastradas.")
+    else:
+        metric_cols = st.columns(len(pick_year_counts) + 1 if pick_year_counts else 1)
+        metric_cols[0].metric("Total de picks", total_picks)
+
+        for idx, (year, qty) in enumerate(sorted(pick_year_counts.items()), start=1):
+            metric_cols[idx].metric(str(year), qty)
+
+        st.dataframe(team_picks_df, use_container_width=True, hide_index=True)
