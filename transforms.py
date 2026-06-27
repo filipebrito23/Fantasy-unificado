@@ -59,6 +59,63 @@ def format_roster_for_display(df: pd.DataFrame, visible_seasons: list[str]) -> p
         rename_map[f"salarie_{season}"] = SEASON_LABELS[season]
     return out.rename(columns=rename_map)
 
+def build_picks_view(picks_df: pd.DataFrame, teams_df: pd.DataFrame, team_id: int) -> pd.DataFrame:
+    if picks_df.empty:
+        return pd.DataFrame()
+
+    required_cols = {"pick_id", "original_team_pick_id", "round", "year", "current_team_owner_id"}
+    if not required_cols.issubset(picks_df.columns):
+        return pd.DataFrame()
+
+    df = picks_df.loc[picks_df["current_team_owner_id"] == team_id].copy()
+
+    if df.empty:
+        return df
+
+    team_lookup = (
+        teams_df[["team_id", "team_name"]]
+        .drop_duplicates()
+        .rename(
+            columns={
+                "team_id": "original_team_pick_id",
+                "team_name": "original_team_name",
+            }
+        )
+    )
+
+    df = df.merge(team_lookup, on="original_team_pick_id", how="left")
+    df = df.sort_values(["year", "round", "original_team_pick_id", "pick_id"]).reset_index(drop=True)
+
+    return df
+
+
+def format_picks_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    out = df.copy()
+
+    out["Pick"] = out.apply(
+        lambda row: f'{int(row["year"])} - R{int(row["round"])} - {row["original_team_name"]}',
+        axis=1,
+    )
+
+    keep_cols = [
+        "Pick",
+        "year",
+        "round",
+        "original_team_name",
+    ]
+    
+    rename_map = {
+        "year": "Ano",
+        "round": "Round",
+        "original_team_name": "Time original",
+    }
+
+    out = out[keep_cols].rename(columns=rename_map)
+    return out
+
 
 def get_team_fines_row(fines_df: pd.DataFrame, team_id: int) -> dict:
     team_fines = fines_df.loc[fines_df["team_id"] == team_id]

@@ -13,6 +13,8 @@ from transforms import (
     format_roster_for_display,
     calculate_main_totals,
     calculate_dev_totals,
+    build_picks_view,
+    format_picks_for_display,
 )
 
 DEFAULT_FILE = Path("roster.xlsx")
@@ -335,6 +337,8 @@ dev_roster_raw = build_roster_view(
 dev_roster = format_roster_for_display(dev_roster_raw, visible_seasons)
 dev_totals = calculate_dev_totals(dev_team_df, visible_seasons)
 
+picks_team_df = build_picks_view(data["picks"], data["teams"], selected_team_id)
+picks_display = format_picks_for_display(picks_team_df)
 
 
 st.subheader("Elenco principal")
@@ -360,3 +364,10 @@ dev_totals_display = format_money_columns(
     ["Salários", "Cap restante"],
 )
 st.dataframe(dev_totals_display, use_container_width=True, hide_index=True)
+
+st.subheader("Picks")
+
+if picks_display.empty:
+    st.info("Esse time não possui picks cadastradas.")
+else:
+    st.dataframe(picks_display, use_container_width=True, hide_index=True)
