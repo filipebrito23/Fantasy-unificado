@@ -235,7 +235,7 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     wb.save(file_path)
 
 
-def build_red_flags(df: pd.DataFrame, visible_seasons: list) -> pd.DataFrame:
+def build_red_flags(df: pd.DataFrame, visible_seasons: list[str]) -> pd.DataFrame:
     if df.empty:
         return df
 
@@ -249,9 +249,12 @@ def build_red_flags(df: pd.DataFrame, visible_seasons: list) -> pd.DataFrame:
             continue
 
         mask = out[opt_col].astype(str).str.strip().str.lower().eq("sim")
+
         out[sal_col] = out[sal_col].apply(currency)
         out.loc[mask, sal_col] = out.loc[mask, sal_col].astype(str) + " 🔴"
-        out.loc[mask, opt_col] = out.loc[mask, opt_col].astype(str) + " 🔴"
+
+    to_cols = [f"TO_{season}" for season in visible_seasons if f"TO_{season}" in out.columns]
+    out = out.drop(columns=to_cols, errors="ignore")
 
     return out
 
@@ -371,11 +374,6 @@ with tab_main:
     st.caption(f"Posições: {main_positions_text}")
 
     display_main = build_red_flags(main_roster, visible_seasons)
-    for season in visible_seasons:
-        label = SEASON_LABELS[season]
-        if label in display_main.columns:
-            display_main[label] = display_main[label].apply(currency)
-
     st.dataframe(display_main, use_container_width=True, hide_index=True)
 
     with st.expander("Totalizadores do elenco principal", expanded=False):
@@ -396,11 +394,6 @@ with tab_dev:
     st.caption(f"Posições: {dev_positions_text}")
 
     display_dev = build_red_flags(dev_roster, visible_seasons)
-    for season in visible_seasons:
-        label = SEASON_LABELS[season]
-        if label in display_dev.columns:
-            display_dev[label] = display_dev[label].apply(currency)
-
     st.dataframe(display_dev, use_container_width=True, hide_index=True)
 
     with st.expander("Totalizadores da development", expanded=False):
