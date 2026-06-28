@@ -249,7 +249,6 @@ def build_red_flags(df: pd.DataFrame, visible_seasons: list[str]) -> pd.DataFram
             continue
 
         mask = out[opt_col].astype(str).str.strip().str.lower().eq("sim")
-
         out[sal_col] = out[sal_col].apply(currency)
         out.loc[mask, sal_col] = out.loc[mask, sal_col].astype(str) + " 🔴"
 
@@ -269,6 +268,43 @@ def format_totals(df: pd.DataFrame, money_cols: list[str]) -> pd.DataFrame:
             out[col] = out[col].apply(currency)
     return out
 
+def get_roster_column_order(df: pd.DataFrame, visible_seasons: list[str]) -> list[str]:
+    ordered = ["Ordem", "Jogador", "Posição"]
+    ordered += [
+        SEASON_LABELS[season]
+        for season in visible_seasons
+        if SEASON_LABELS[season] in df.columns
+    ]
+    return [col for col in ordered if col in df.columns]
+
+
+def get_roster_column_config(visible_seasons: list[str]) -> dict:
+    config = {
+        "Ordem": st.column_config.NumberColumn("Ordem", width="small", format="%d"),
+        "Jogador": st.column_config.TextColumn("Jogador", width="large"),
+        "Posição": st.column_config.TextColumn("Posição", width="small"),
+    }
+
+    for season in visible_seasons:
+        label = SEASON_LABELS[season]
+        config[label] = st.column_config.TextColumn(label, width="medium")
+
+    return config
+
+
+def get_picks_column_order(df: pd.DataFrame) -> list[str]:
+    preferred = ["Pick", "Ano", "Round", "Time original", "Time atual"]
+    return [col for col in preferred if col in df.columns]
+
+
+def get_picks_column_config() -> dict:
+    return {
+        "Pick": st.column_config.TextColumn("Pick", width="medium"),
+        "Ano": st.column_config.NumberColumn("Ano", width="small", format="%d"),
+        "Round": st.column_config.NumberColumn("Round", width="small", format="%d"),
+        "Time original": st.column_config.TextColumn("Time original", width="medium"),
+        "Time atual": st.column_config.TextColumn("Time atual", width="medium"),
+    }
 
 user = require_login_v5()
 
@@ -357,6 +393,26 @@ dev_positions_text = " | ".join([f"{pos}: {qty}" for pos, qty in dev_position_co
 
 team_picks_df = picks_df.loc[picks_df["current_team_owner_id"] == selected_team_id].copy() if not picks_df.empty else pd.DataFrame()
 pick_year_counts = summarize_picks_by_year(team_picks_df)
+picks_display = team_picks_df.copy()
+
+if not picks_display.empty:
+    if "original_team_pick_id" in picks_display.columns:
+        picks_display["Time original"] = picks_display["original_team_pick_id"].map(team_lookup).fillna(
+            picks_display["original_team_pick_id"]
+        )
+
+    if "current_team_owner_id" in picks_display.columns:
+        picks_display["Time atual"] = picks_display["current_team_owner_id"].map(team_lookup).fillna(
+            picks_display["current_team_owner_id"]
+        )
+
+    rename_map = {
+        "pick_id": "Pick",
+        "year": "Ano",
+        "round": "Round",
+    }
+    picks_display = picks_display.rename(columns=rename_map)
+
 
 st.subheader(f"Elencos - {selected_team_name}")
 
@@ -374,7 +430,14 @@ with tab_main:
     st.caption(f"Posições: {main_positions_text}")
 
     display_main = build_red_flags(main_roster, visible_seasons)
-    st.dataframe(display_main, use_container_width=True, hide_index=True)
+
+    st.dataframe(
+        display_main,
+        use_container_width=True,
+        hide_index=True,
+        column_order=get_roster_column_order(display_main, visible_seasons),
+        column_config=get_roster_column_config(visible_seasons),
+    )
 
     with st.expander("Totalizadores do elenco principal", expanded=False):
         main_totals_display = main_totals.copy()
@@ -394,7 +457,14 @@ with tab_dev:
     st.caption(f"Posições: {dev_positions_text}")
 
     display_dev = build_red_flags(dev_roster, visible_seasons)
-    st.dataframe(display_dev, use_container_width=True, hide_index=True)
+
+    st.dataframe(
+        display_dev,
+        use_container_width=True,
+        hide_index=True,
+        column_order=get_roster_column_order(display_dev, visible_seasons),
+        column_config=get_roster_column_config(visible_seasons),
+    )
 
     with st.expander("Totalizadores da development", expanded=False):
         dev_totals_display = dev_totals.copy()
@@ -415,4 +485,10 @@ with tab_picks:
         for idx, (year, qty) in enumerate(sorted(pick_year_counts.items()), start=1):
             metric_cols[idx].metric(str(year), qty)
 
-        st.dataframe(team_picks_df, use_container_width=True, hide_index=True)
+        st.dataframe(
+            picks_display,
+            use_container_width=True,
+            hide_index=True,
+            column_order=get_picks_column_order(picks_display),
+            column_config=get_picks_column_config(),
+        )
