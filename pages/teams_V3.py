@@ -21,7 +21,7 @@ from transforms import (
 
 DEFAULT_FILE = Path("roster.xlsx")
 TX_SHEET = "transactions"
-TX_ITEMS_SHEET = "transactionitems"
+TX_ITEMS_SHEET = "transaction_items"
 
 
 def require_login_v5():
@@ -91,10 +91,9 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_sheet_df(wb, sheet_name: str) -> pd.DataFrame:
-    real_name = find_sheet_name(wb, sheet_name)
-    if real_name is None:
+    if sheet_name not in wb.sheetnames:
         return pd.DataFrame()
-    ws = wb[real_name]
+    ws = wb[sheet_name]
     rows = list(ws.values)
     if not rows:
         return pd.DataFrame()
@@ -258,14 +257,6 @@ def build_red_flags(df: pd.DataFrame, visible_seasons: list[str]) -> pd.DataFram
 
     return out
 
-def compact_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out.columns = [
-        str(c).strip().lower().replace("_", "").replace(" ", "")
-        for c in out.columns
-    ]
-    return out
-
 def build_transactions_history(
     tx_df: pd.DataFrame,
     items_df: pd.DataFrame,
@@ -276,11 +267,12 @@ def build_transactions_history(
     if tx_df is None or tx_df.empty:
         return pd.DataFrame()
 
-    tx = compact_columns(tx_df)
+    tx = tx_df.copy()
+    tx.columns = [str(c).strip().lower() for c in tx.columns]
 
     items = items_df.copy() if items_df is not None else pd.DataFrame()
     if not items.empty:
-        items = compact_columns(items)
+        items.columns = [str(c).strip().lower() for c in items.columns]
 
     if not {"fromteamid", "toteamid"}.issubset(tx.columns):
         return pd.DataFrame()
@@ -338,12 +330,14 @@ def build_transactions_history(
         else:
             tx["items_summary"] = "-"
 
-    tx = tx.rename(columns={
-        "transactionid": "transaction_id",
-        "transactiontype": "transaction_type",
-        "transactiondate": "transaction_date",
-        "initiatedby": "initiated_by",
-    })
+    tx = tx.rename(
+        columns={
+            "transactionid": "transaction_id",
+            "transactiontype": "transaction_type",
+            "transactiondate": "transaction_date",
+            "initiatedby": "initiated_by",
+        }
+    )
 
     preferred_cols = [
         "transaction_id",
@@ -357,6 +351,7 @@ def build_transactions_history(
         "items_summary",
         "notes",
     ]
+
     existing_cols = [c for c in preferred_cols if c in tx.columns]
 
     sort_cols = [c for c in ["transaction_date", "transaction_id"] if c in tx.columns]
@@ -685,26 +680,4 @@ with tab_transactions:
             filtered_tx["season"].nunique() if "season" in filtered_tx.columns else 0,
         )
 
-        tx_display_cols = [
-    c for c in [
-        "transaction_date",
-        "season",
-        "from_team",
-        "to_team",
-        "items_summary",
-    ]
-    if c in filtered_tx.columns
-]
-
-st.dataframe(
-    filtered_tx[tx_display_cols],
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "transaction_date": st.column_config.TextColumn("Data", width="small"),
-        "season": st.column_config.TextColumn("Season", width="small"),
-        "from_team": st.column_config.TextColumn("De", width="small"),
-        "to_team": st.column_config.TextColumn("Para", width="small"),
-        "items_summary": st.column_config.TextColumn("Itens", width="large"),
-    },
-)
+        st.dataframe(filtered_tx, use_container_width=True, hide_index=True)
