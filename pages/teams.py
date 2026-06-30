@@ -532,9 +532,42 @@ if not picks_display.empty:
     picks_display = picks_display.rename(columns=rename_map)
 
 
-st.subheader(f"Elencos - {selected_team_name}")
 
-tab_main, tab_dev, tab_picks, tab_transactions = st.tabs(["Principal", "Development", "Picks", "Transactions"])
+main_summary = main_totals.iloc[0].to_dict() if not main_totals.empty else {}
+total_picks = len(team_picks_df)
+cap_remaining = pd.to_numeric(
+    pd.Series([main_summary.get("Cap restante", 0.0)]),
+    errors="coerce"
+).iloc[0]
+
+if pd.isna(cap_remaining):
+    cap_remaining = 0.0
+
+if cap_remaining < 0:
+    cap_status = "🔴 Cap estourado"
+elif cap_remaining <= 5000000:
+    cap_status = "🟡 Cap apertado"
+else:
+    cap_status = "🟢 Cap confortável"
+
+summary_row_1 = st.columns(3)
+summary_row_1[0].metric("Time", selected_team_name)
+summary_row_1[1].metric("MAIN players", len(main_roster))
+summary_row_1[2].metric("DEV players", len(dev_roster))
+
+summary_row_2 = st.columns(3)
+summary_row_2[0].metric("Salários MAIN", currency(main_summary.get("Salários", 0.0)))
+summary_row_2[1].metric("Cap restante", currency(cap_remaining))
+summary_row_2[2].metric("Picks", total_picks)
+
+
+st.markdown(f"**Status do cap:** {cap_status}")
+
+st.divider()
+
+tab_main, tab_dev, tab_picks, tab_transactions = st.tabs(
+    ["Principal", "Development", "Picks", "Transactions"]
+)
 
 with tab_main:
     c1, c2, c3, c4 = st.columns(4)
