@@ -532,9 +532,10 @@ if not picks_display.empty:
     picks_display = picks_display.rename(columns=rename_map)
 
 
-
+#Elencos 
 main_summary = main_totals.iloc[0].to_dict() if not main_totals.empty else {}
 total_picks = len(team_picks_df)
+
 cap_remaining = pd.to_numeric(
     pd.Series([main_summary.get("Cap restante", 0.0)]),
     errors="coerce"
@@ -550,16 +551,68 @@ elif cap_remaining <= 5000000:
 else:
     cap_status = "🟢 Cap confortável"
 
-summary_row_1 = st.columns(3)
-summary_row_1[0].metric("Time", selected_team_name)
-summary_row_1[1].metric("MAIN players", len(main_roster))
-summary_row_1[2].metric("DEV players", len(dev_roster))
+st.markdown("""
+<style>
+.summary-card {
+    padding: 14px 16px;
+    border-radius: 12px;
+    background: rgba(127, 127, 127, 0.08);
+    border: 1px solid rgba(127, 127, 127, 0.18);
+    margin-bottom: 10px;
+    min-height: 96px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.summary-label {
+    font-size: 0.82rem;
+    opacity: 0.75;
+    margin-bottom: 6px;
+}
+.summary-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+.cap-status-line {
+    margin-top: 0.35rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+</style>
+""", unsafe_allow_html=True)
 
-summary_row_2 = st.columns(3)
-summary_row_2[0].metric("Salários MAIN", currency(main_summary.get("Salários", 0.0)))
-summary_row_2[1].metric("Cap restante", currency(cap_remaining))
-summary_row_2[2].metric("Picks", total_picks)
+def render_summary_card(label, value):
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">{label}</div>
+            <div class="summary-value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+row_1 = st.columns(3)
+with row_1[0]:
+    render_summary_card("Time", selected_team_name)
+
+with row_1[1]:
+    render_summary_card("MAIN players", len(main_roster))
+
+with row_1[2]:
+    render_summary_card("DEV players", len(dev_roster))
+
+row_2 = st.columns(3)
+with row_2[0]:
+    render_summary_card("Salários MAIN", currency(main_summary.get("Salários", 0.0)))
+
+with row_2[1]:
+    render_summary_card("Cap restante", currency(cap_remaining))
+
+with row_2[2]:
+    render_summary_card("Picks", total_picks)
 
 st.markdown(f"**Status do cap:** {cap_status}")
 
