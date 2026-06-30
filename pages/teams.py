@@ -618,6 +618,7 @@ with tab_transactions:
         st.info("Esse time ainda não possui transactions registradas.")
     else:
         filter_col1, filter_col2, filter_col3 = st.columns(3)
+
         type_options = ["Todas"]
         if "transaction_type" in team_transactions_df.columns:
             type_options += sorted(
@@ -649,13 +650,25 @@ with tab_transactions:
             )
 
         with filter_col1:
-            selected_tx_type = st.selectbox("Tipo", type_options, key="tx_history_type_v3")
+            selected_tx_type = st.selectbox(
+                "Tipo",
+                type_options,
+                key="tx_history_type_v3",
+            )
 
         with filter_col2:
-            selected_tx_status = st.selectbox("Status", status_options, key="tx_history_status_v3")
+            selected_tx_status = st.selectbox(
+                "Status",
+                status_options,
+                key="tx_history_status_v3",
+            )
 
         with filter_col3:
-            selected_tx_season = st.selectbox("Season", season_options, key="tx_history_season_v3")
+            selected_tx_season = st.selectbox(
+                "Season",
+                season_options,
+                key="tx_history_season_v3",
+            )
 
         filtered_tx = team_transactions_df.copy()
 
@@ -678,33 +691,36 @@ with tab_transactions:
         metric_cols[0].metric("Transactions", len(filtered_tx))
         metric_cols[1].metric(
             "Tipos distintos",
-            filtered_tx["transaction_type"].nunique() if "transaction_type" in filtered_tx.columns else 0,
+            filtered_tx["transaction_type"].nunique()
+            if "transaction_type" in filtered_tx.columns
+            else 0,
         )
         metric_cols[2].metric(
             "Seasons",
-            filtered_tx["season"].nunique() if "season" in filtered_tx.columns else 0,
+            filtered_tx["season"].nunique()
+            if "season" in filtered_tx.columns
+            else 0,
         )
 
-        tx_display_cols = [
-    c for c in [
-        "transaction_date",
-        "season",
-        "from_team",
-        "to_team",
-        "items_summary",
-    ]
-    if c in filtered_tx.columns
-]
+        display_cols = [
+            col
+            for col in [
+                "transaction_id",
+                "transaction_date",
+                "transaction_type",
+                "season",
+                "from_team",
+                "to_team",
+                "initiated_by",
+                "status",
+                "items_summary",
+                "notes",
+            ]
+            if col in filtered_tx.columns
+        ]
 
-st.dataframe(
-    filtered_tx[tx_display_cols],
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "transaction_date": st.column_config.TextColumn("Data", width="small"),
-        "season": st.column_config.TextColumn("Season", width="small"),
-        "from_team": st.column_config.TextColumn("De", width="small"),
-        "to_team": st.column_config.TextColumn("Para", width="small"),
-        "items_summary": st.column_config.TextColumn("Itens", width="large"),
-    },
-)
+        st.dataframe(
+            filtered_tx[display_cols] if display_cols else filtered_tx,
+            use_container_width=True,
+            hide_index=True,
+        )
