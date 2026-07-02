@@ -89,16 +89,49 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     out = out.where(pd.notna(out), None)
     return out
 
+def find_sheet_name(wb, sheet_name: str) -> str | None:
+    target = str(sheet_name).strip().lower()
+
+    for existing_name in wb.sheetnames:
+        if str(existing_name).strip().lower() == target:
+            return existing_name
+
+    aliases = {
+        "transaction_items": ["transaction_items", "transactionitems"],
+        "transactions": ["transactions", "transaction"],
+        "roster": ["roster"],
+        "development": ["development", "dev"],
+        "picks": ["picks", "pick"],
+    }
+
+    valid_names = aliases.get(target, [sheet_name])
+
+    for existing_name in wb.sheetnames:
+        normalized_existing = str(existing_name).strip().lower()
+        if normalized_existing in valid_names:
+            return existing_name
+
+    return None
+
 
 def load_sheet_df(wb, sheet_name: str) -> pd.DataFrame:
     real_name = find_sheet_name(wb, sheet_name)
     if real_name is None:
         return pd.DataFrame()
+
     ws = wb[real_name]
     rows = list(ws.values)
+
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame(rows[1:], columns=rows[0])
+
+    header = rows[0]
+    data_rows = rows[1:]
+
+    if header is None:
+        return pd.DataFrame()
+
+    return pd.DataFrame(data_rows, columns=header)
 
 
 def save_sheet_df(wb, sheet_name: str, df: pd.DataFrame):
@@ -698,6 +731,254 @@ with tab_picks:
         )
 
 with tab_transactions:
+    with st.expander("Registrar nova transaction", expanded=False):
+        tx_base_df = transactions_df.copy() if transactions_df is not None else pd.DataFrame()
+
+        tx_col1, tx_col2, tx_col3 = st.columns(3)
+        with tx_col1:
+            tx_date = st.date_input("Data da transaction", key="tx_form_date_v5a")
+        with tx_col2:
+            tx_type = st.selectbox(
+                "Tipo",
+                ["Trade", "Waiver", "Signing", "Release", "Other"],
+                key="tx_form_type_v5a",
+            )
+        with tx_col3:
+            tx_season = st.selectbox(
+                "Season",
+                SEASONS,
+                format_func=lambda x: SEASON_LABELS[x],
+                key="tx_form_season_v5a",
+            )
+
+        tx_col4, tx_col5, tx_col6 = st.columns(3)
+        with tx_col4:
+            from_team_name = st.selectbox(
+                "Time origem",
+                teams["team_name"].tolist(),
+                index=teams["team_name"].tolist().index(selected_team_name),
+                key="tx_form_from_team_v5a",
+            )
+        with tx_col5:
+            to_team_options = [t for t in teams["team_name"].tolist() if t != from_team_name]
+            to_team_name = st.selectbox(
+                "Time destino",
+                to_team_options,
+                key="tx_form_to_team_v5a",
+            )
+        with tx_col6:
+            tx_status = st.selectbox(
+                "Status",
+                ["Pendente", "Concluída", "Cancelada"],
+                index=1,
+                key="tx_form_status_v5a",
+            )
+
+        tx_col7, tx_col8 = st.columns([1, 2])
+        with tx_col7:
+            initiated_by = st.text_input(
+                "Iniciada por",
+                value=str(user) if user is not None else "",
+                key="tx_form_initiated_by_v5a",
+            )
+        with tx_col8:
+            tx_notes = st.text_input(
+                "Notas",
+                key="tx_form_notes_v5a",
+            )
+
+        from_team_id = int(
+            teams.loc[teams["team_name"] == from_team_name, "team_id"].iloc[0]
+        )
+        to_team_id = int(
+            teams.loc[teams["team_name"] == to_team_name, "team_id"].iloc[0]
+        )
+
+        source_main_df = data["roster"].loc[data["roster"]["team_id"] == from_team_id].copy()
+        source_dev_df = data["development"].loc[data["development"]["team_id"] == from_team_id].copy()
+
+        main_player_options = []
+        if not source_main_df.empty and not data["players"].empty:
+            tmp_main = source_main_df.merge(
+                data["players"][["player_id", "player_name"]],
+                on="player_id",
+                how="left",
+            )
+            main_player_options = [
+                (int(row.player_id), f"{row.player_name} (MAIN)")
+                for row in tmp_main.itertuples()
+            ]
+
+        dev_player_options = []
+        if not source_dev_df.empty and not data["players"].empty:
+            tmp_dev = source_dev_df.merge(
+                data["players"][["player_id", "player_name"]],
+                on="player_id",
+                how="left",
+            )
+            dev_player_options = [
+                (int(row.player_id), f"{row.player_name} (DEV)")
+                for row in tmp_dev.itertuples()
+            ]
+
+        source_pick_options = []
+        if not picks_df.empty:
+            source_team_picks = picks_df.loc[
+                picks_df["current_team_owner_id"] == from_team_id
+            ].copy()
+            if not source_team_picks.empty:
+                pick_id_col = source_team_picks.columns[0]
+                for row in source_team_picks.itertuples(index=False):
+                    row_dict = row._asdict()
+                    pick_id = str(row_dict.get(pick_id_col))
+                    year = row_dict.get("year", "")
+                    rnd = row_dict.get("round", "")
+                    source_pick_options.append((pick_id, f"{pick_id} | {year} | R{rnd}"))
+
+        st.markdown("#### Itens enviados pelo time origem")
+
+        item_count = st.number_input(
+            "Quantidade de itens",
+            min_value=1,
+            max_value=10,
+            value=1,
+            step=1,
+            key="tx_form_item_count_v5a",
+        )
+
+        item_rows = []
+        for i in range(int(item_count)):
+            st.markdown(f"**Item {i + 1}**")
+            item_col1, item_col2, item_col3 = st.columns(3)
+
+            with item_col1:
+                item_type = st.selectbox(
+                    "Tipo do item",
+                    ["player", "pick"],
+                    key=f"tx_form_item_type_v5a_{i}",
+                )
+
+            if item_type == "player":
+                combined_player_options = main_player_options + dev_player_options
+                player_labels = [label for _, label in combined_player_options]
+
+                with item_col2:
+                    selected_player_label = st.selectbox(
+                        "Jogador",
+                        player_labels,
+                        key=f"tx_form_player_label_v5a_{i}",
+                    )
+
+                player_match = next(
+                    (opt for opt in combined_player_options if opt[1] == selected_player_label),
+                    None,
+                )
+
+                asset_id = player_match[0] if player_match else None
+                from_roster_type = "MAIN" if selected_player_label.endswith("(MAIN)") else "DEV"
+
+                with item_col3:
+                    to_roster_type = st.selectbox(
+                        "Destino do jogador",
+                        ["MAIN", "DEV"],
+                        index=0 if from_roster_type == "MAIN" else 1,
+                        key=f"tx_form_to_roster_type_v5a_{i}",
+                    )
+
+                item_rows.append(
+                    {
+                        "item_id": i + 1,
+                        "item_type": "player",
+                        "asset_id": asset_id,
+                        "from_roster_type": from_roster_type,
+                        "to_roster_type": to_roster_type,
+                    }
+                )
+
+            else:
+                pick_labels = [label for _, label in source_pick_options]
+
+                with item_col2:
+                    selected_pick_label = st.selectbox(
+                        "Pick",
+                        pick_labels if pick_labels else ["Sem picks disponíveis"],
+                        key=f"tx_form_pick_label_v5a_{i}",
+                    )
+
+                pick_match = next(
+                    (opt for opt in source_pick_options if opt[1] == selected_pick_label),
+                    None,
+                )
+
+                asset_id = pick_match[0] if pick_match else None
+
+                with item_col3:
+                    st.markdown("Destino automático: picks")
+
+                item_rows.append(
+                    {
+                        "item_id": i + 1,
+                        "item_type": "pick",
+                        "asset_id": asset_id,
+                        "from_roster_type": None,
+                        "to_roster_type": None,
+                    }
+                )
+
+        save_tx = st.button("Salvar transaction", key="tx_form_save_v5a", type="primary")
+
+        if save_tx:
+            form_errors = []
+
+            if from_team_id == to_team_id:
+                form_errors.append("Time origem e destino não podem ser iguais.")
+
+            cleaned_item_rows = []
+            for row in item_rows:
+                if row["asset_id"] in [None, "", "Sem picks disponíveis"]:
+                    form_errors.append("Há item sem asset válido selecionado.")
+                else:
+                    cleaned_item_rows.append(row)
+
+            validation_errors = validate_items(data, from_team_id, cleaned_item_rows)
+            form_errors.extend(validation_errors)
+
+            if form_errors:
+                for err in form_errors:
+                    st.error(err)
+            else:
+                tx_id_col = "transaction_id" if "transaction_id" in tx_base_df.columns else "transactionid"
+                next_tx_id = get_next_id(tx_base_df, tx_id_col, start=1)
+
+                tx_row = {
+                    tx_id_col: next_tx_id,
+                    "transaction_date" if "transaction_date" in tx_base_df.columns else "transactiondate": str(tx_date),
+                    "transaction_type" if "transaction_type" in tx_base_df.columns else "transactiontype": tx_type,
+                    "season": tx_season,
+                    "from_team_id" if "from_team_id" in tx_base_df.columns else "fromteamid": from_team_id,
+                    "to_team_id" if "to_team_id" in tx_base_df.columns else "toteamid": to_team_id,
+                    "initiated_by" if "initiated_by" in tx_base_df.columns else "initiatedby": initiated_by,
+                    "status": tx_status,
+                    "notes": tx_notes,
+                }
+
+                prepared_items = []
+                for row in cleaned_item_rows:
+                    prepared_items.append(
+                        {
+                            "transaction_id" if not transaction_items_df.empty and "transaction_id" in transaction_items_df.columns else "transactionid": next_tx_id,
+                            "item_id" if not transaction_items_df.empty and "item_id" in transaction_items_df.columns else "itemid": row["item_id"],
+                            "item_type" if not transaction_items_df.empty and "item_type" in transaction_items_df.columns else "itemtype": row["item_type"],
+                            "asset_id" if not transaction_items_df.empty and "asset_id" in transaction_items_df.columns else "assetid": row["asset_id"],
+                            "from_roster_type" if not transaction_items_df.empty and "from_roster_type" in transaction_items_df.columns else "fromrostertype": row["from_roster_type"],
+                            "to_roster_type" if not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns else "torostertype": row["to_roster_type"],
+                        }
+                    )
+
+                append_transaction(str(DEFAULT_FILE), tx_row, prepared_items)
+                st.cache_data.clear()
+                st.success("Transaction salva com sucesso. Recarregue a página para atualizar os dados.")
+
     st.subheader("Histórico de transactions")
 
     if team_transactions_df.empty:
@@ -736,25 +1017,13 @@ with tab_transactions:
             )
 
         with filter_col1:
-            selected_tx_type = st.selectbox(
-                "Tipo",
-                type_options,
-                key="tx_history_type_v3",
-            )
+            selected_tx_type = st.selectbox("Tipo", type_options, key="tx_history_type_v3")
 
         with filter_col2:
-            selected_tx_status = st.selectbox(
-                "Status",
-                status_options,
-                key="tx_history_status_v3",
-            )
+            selected_tx_status = st.selectbox("Status", status_options, key="tx_history_status_v3")
 
         with filter_col3:
-            selected_tx_season = st.selectbox(
-                "Season",
-                season_options,
-                key="tx_history_season_v3",
-            )
+            selected_tx_season = st.selectbox("Season", season_options, key="tx_history_season_v3")
 
         filtered_tx = team_transactions_df.copy()
 
@@ -778,35 +1047,12 @@ with tab_transactions:
         metric_cols[1].metric(
             "Tipos distintos",
             filtered_tx["transaction_type"].nunique()
-            if "transaction_type" in filtered_tx.columns
-            else 0,
+            if "transaction_type" in filtered_tx.columns else 0,
         )
         metric_cols[2].metric(
             "Seasons",
             filtered_tx["season"].nunique()
-            if "season" in filtered_tx.columns
-            else 0,
+            if "season" in filtered_tx.columns else 0,
         )
 
-        display_cols = [
-            col
-            for col in [
-                "transaction_id",
-                "transaction_date",
-                "transaction_type",
-                "season",
-                "from_team",
-                "to_team",
-                "initiated_by",
-                "status",
-                "items_summary",
-                "notes",
-            ]
-            if col in filtered_tx.columns
-        ]
-
-        st.dataframe(
-            filtered_tx[display_cols] if display_cols else filtered_tx,
-            use_container_width=True,
-            hide_index=True,
-        )
+        st.dataframe(filtered_tx, use_container_width=True, hide_index=True)
