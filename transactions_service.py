@@ -87,35 +87,53 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     dev_df = load_sheet_df(wb, "development")
     picks_df = load_sheet_df(wb, "picks")
 
-    from_team_id = int(tx_row["from_team_id"])
-    to_team_id = int(tx_row["to_team_id"])
+    from_team_id = tx_row.get("from_team_id", tx_row.get("fromteamid"))
+    to_team_id = tx_row.get("to_team_id", tx_row.get("toteamid"))
+
+    if from_team_id is None or to_team_id is None:
+        raise ValueError("Transaction sem from_team_id/to_team_id válidos.")
+
+    from_team_id = int(from_team_id)
+    to_team_id = int(to_team_id)
 
     for item in item_rows:
-        if item["item_type"] == "player":
-            pid = int(item["asset_id"])
+        item_type = item.get("item_type", item.get("itemtype"))
+        asset_id = item.get("asset_id", item.get("assetid"))
+        from_roster_type = item.get("from_roster_type", item.get("fromrostertype"))
+        to_roster_type = item.get("to_roster_type", item.get("torostertype"))
 
-            if item["from_roster_type"] == "MAIN" and not roster_df.empty:
+        if item_type == "player":
+            if asset_id is None:
+                continue
+
+            pid = int(asset_id)
+
+            if str(from_roster_type).strip().upper() == "MAIN" and not roster_df.empty:
                 mask = (
-                    (roster_df["team_id"].astype(int) == from_team_id)
-                    & (roster_df["player_id"].astype(int) == pid)
+                    (pd.to_numeric(roster_df["team_id"], errors="coerce") == from_team_id)
+                    & (pd.to_numeric(roster_df["player_id"], errors="coerce") == pid)
                 )
                 roster_df.loc[mask, "team_id"] = to_team_id
 
-            elif item["from_roster_type"] == "DEV" and not dev_df.empty:
+            elif str(from_roster_type).strip().upper() == "DEV" and not dev_df.empty:
                 mask = (
-                    (dev_df["team_id"].astype(int) == from_team_id)
-                    & (dev_df["player_id"].astype(int) == pid)
+                    (pd.to_numeric(dev_df["team_id"], errors="coerce") == from_team_id)
+                    & (pd.to_numeric(dev_df["player_id"], errors="coerce") == pid)
                 )
                 dev_df.loc[mask, "team_id"] = to_team_id
 
-        elif item["item_type"] == "pick" and not picks_df.empty:
+        elif item_type == "pick" and not picks_df.empty:
+            if asset_id is None:
+                continue
+
             id_col = picks_df.columns[0]
             owner_cols = [c for c in picks_df.columns if "owner" in c.lower() or "team" in c.lower()]
+
             if owner_cols:
                 owner_col = owner_cols[0]
                 mask = (
-                    picks_df[id_col].astype(str).eq(str(item["asset_id"]))
-                    & picks_df[owner_col].astype(int).eq(from_team_id)
+                    picks_df[id_col].astype(str).eq(str(asset_id))
+                    & pd.to_numeric(picks_df[owner_col], errors="coerce").eq(from_team_id)
                 )
                 picks_df.loc[mask, owner_col] = to_team_id
 
@@ -124,6 +142,15 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     save_sheet_df(wb, "picks", picks_df)
 
     wb.save(file_path)
+
+
+def compact_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.columns = [
+        str(c).strip().lower().replace("_", "").replace(" ", "")
+        for c in out.columns
+    ]
+    return out
 
 
 def compact_columns(df: pd.DataFrame) -> pd.DataFrame:

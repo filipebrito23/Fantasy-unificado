@@ -21,6 +21,7 @@ from excel_utils import get_next_id
 from transactions_service import (
     TX_SHEET,
     TX_ITEMS_SHEET,
+    update_rosters,
     validate_items,
     append_transaction,
     build_transactions_history,
@@ -492,59 +493,60 @@ with tab_transactions:
 
             save_tx = st.button("Salvar transaction", key="tx_form_save_v5a", type="primary")
 
-            if save_tx:
-                form_errors = []
+        if save_tx:
+            form_errors = []
 
-                if from_team_id == to_team_id:
-                    form_errors.append("Time origem e destino não podem ser iguais.")
+            if from_team_id == to_team_id:
+                form_errors.append("Time origem e destino não podem ser iguais.")
 
-                cleaned_item_rows = []
-                for row in item_rows:
-                    if row["asset_id"] in [None, "", "Sem picks disponíveis"]:
-                        form_errors.append("Há item sem asset válido selecionado.")
-                    else:
-                        cleaned_item_rows.append(row)
-
-                validation_errors = validate_items(data, from_team_id, cleaned_item_rows)
-                form_errors.extend(validation_errors)
-
-                if form_errors:
-                    for err in form_errors:
-                        st.error(err)
+            cleaned_item_rows = []
+            for row in item_rows:
+                if row["asset_id"] in [None, "", "Sem picks disponíveis"]:
+                    form_errors.append("Há item sem asset válido selecionado.")
                 else:
-                    tx_id_col = "transaction_id" if "transaction_id" in tx_base_df.columns else "transactionid"
-                    next_tx_id = get_next_id(tx_base_df, tx_id_col, start=1)
+                    cleaned_item_rows.append(row)
 
-                    tx_row = {
-                        tx_id_col: next_tx_id,
-                        "transaction_date" if "transaction_date" in tx_base_df.columns else "transactiondate": str(tx_date),
-                        "transaction_type" if "transaction_type" in tx_base_df.columns else "transactiontype": tx_type,
-                        "season": tx_season,
-                        "from_team_id" if "from_team_id" in tx_base_df.columns else "fromteamid": from_team_id,
-                        "to_team_id" if "to_team_id" in tx_base_df.columns else "toteamid": to_team_id,
-                        "initiated_by" if "initiated_by" in tx_base_df.columns else "initiatedby": initiated_by,
-                        "status": tx_status,
-                        "notes": tx_notes,
-                    }
+            validation_errors = validate_items(data, from_team_id, cleaned_item_rows)
+            form_errors.extend(validation_errors)
 
-                    prepared_items = []
-                    for row in cleaned_item_rows:
-                        prepared_items.append(
-                            {
-                                "transaction_id" if not transaction_items_df.empty and "transaction_id" in transaction_items_df.columns else "transactionid": next_tx_id,
-                                "item_id" if not transaction_items_df.empty and "item_id" in transaction_items_df.columns else "itemid": row["item_id"],
-                                "item_type" if not transaction_items_df.empty and "item_type" in transaction_items_df.columns else "itemtype": row["item_type"],
-                                "asset_id" if not transaction_items_df.empty and "asset_id" in transaction_items_df.columns else "assetid": row["asset_id"],
-                                "from_roster_type" if not transaction_items_df.empty and "from_roster_type" in transaction_items_df.columns else "fromrostertype": row["from_roster_type"],
-                                "to_roster_type" if not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns else "torostertype": row["to_roster_type"],
-                            }
-                        )
-
-                    append_transaction(str(DEFAULT_FILE), tx_row, prepared_items)
-                    st.cache_data.clear()
-                    st.success("Transaction salva com sucesso. Recarregue a página para atualizar os dados.")
+            if form_errors:
+                for err in form_errors:
+                    st.error(err)
             else:
-                st.error("Usuário não tem acesso para realizar esta ação.")
+                tx_id_col = "transaction_id" if "transaction_id" in tx_base_df.columns else "transactionid"
+                next_tx_id = get_next_id(tx_base_df, tx_id_col, start=1)
+
+                tx_row = {
+                    tx_id_col: next_tx_id,
+                    "transaction_date" if "transaction_date" in tx_base_df.columns else "transactiondate": str(tx_date),
+                    "transaction_type" if "transaction_type" in tx_base_df.columns else "transactiontype": tx_type,
+                    "season": tx_season,
+                    "from_team_id" if "from_team_id" in tx_base_df.columns else "fromteamid": from_team_id,
+                    "to_team_id" if "to_team_id" in tx_base_df.columns else "toteamid": to_team_id,
+                    "initiated_by" if "initiated_by" in tx_base_df.columns else "initiatedby": initiated_by,
+                    "status": tx_status,
+                    "notes": tx_notes,
+                }
+
+                prepared_items = []
+                for row in cleaned_item_rows:
+                    prepared_items.append(
+                        {
+                            "transaction_id" if not transaction_items_df.empty and "transaction_id" in transaction_items_df.columns else "transactionid": next_tx_id,
+                            "item_id" if not transaction_items_df.empty and "item_id" in transaction_items_df.columns else "itemid": row["item_id"],
+                            "item_type" if not transaction_items_df.empty and "item_type" in transaction_items_df.columns else "itemtype": row["item_type"],
+                            "asset_id" if not transaction_items_df.empty and "asset_id" in transaction_items_df.columns else "assetid": row["asset_id"],
+                            "from_roster_type" if not transaction_items_df.empty and "from_roster_type" in transaction_items_df.columns else "fromrostertype": row["from_roster_type"],
+                            "to_roster_type" if not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns else "torostertype": row["to_roster_type"],
+                        }
+                    )
+
+                append_transaction(str(DEFAULT_FILE), tx_row, prepared_items)
+                update_rosters(str(DEFAULT_FILE), tx_row, prepared_items)
+
+                st.cache_data.clear()
+                st.success("Transaction salva e aplicada com sucesso.")
+                st.rerun()
 
     st.subheader("Histórico de transactions")
 
@@ -572,7 +574,6 @@ with tab_transactions:
                 .unique()
                 .tolist()
             )
-
         season_options = ["Todas"]
         if "season" in team_transactions_df.columns:
             season_options += sorted(

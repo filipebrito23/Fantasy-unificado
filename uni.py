@@ -74,12 +74,11 @@ def render_force_password_change_v5(user):
 
     st.stop()
 
-
 ok_startup, startup_error = startup_v5()
 if not ok_startup:
     st.error(f"Erro ao inicializar aplicação: {startup_error}")
     st.stop()
-
+    
 init_session_v5()
 
 st.sidebar.caption(f"Ambiente: {get_environment_label_v5()}")
