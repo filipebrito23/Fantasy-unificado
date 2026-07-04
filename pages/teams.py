@@ -21,10 +21,11 @@ from excel_utils import get_next_id
 from transactions_service import (
     TX_SHEET,
     TX_ITEMS_SHEET,
+    pick_domain_ids,
     update_rosters,
-    validate_items,
     append_transaction,
     build_transactions_history,
+    validate_items_bilateral,
 )
 from teams_ui_helpers import (
     currency,
@@ -294,259 +295,333 @@ with tab_picks:
         )
 
 with tab_transactions:
-    is_admin = str(user.get("role", "")).strip().lower() == "admin"
-
     if is_admin:
         with st.expander("Registrar nova transaction", expanded=False):
-            tx_base_df = transactions_df.copy() if transactions_df is not None else pd.DataFrame()
+            tx_base_df = data.get(TX_SHEET, pd.DataFrame())
+            transaction_items_df = data.get(TX_ITEMS_SHEET, pd.DataFrame())
 
-            tx_col1, tx_col2, tx_col3 = st.columns(3)
-            with tx_col1:
-                tx_date = st.date_input("Data da transaction", key="tx_form_date_v5a")
-            with tx_col2:
-                tx_type = st.selectbox(
-                    "Tipo",
-                    ["Trade", "Waiver", "Signing", "Release", "Other"],
-                    key="tx_form_type_v5a",
-                )
-            with tx_col3:
-                tx_season = st.selectbox(
-                    "Season",
-                    SEASONS,
-                    format_func=lambda x: SEASON_LABELS[x],
-                    key="tx_form_season_v5a",
-                )
+            team_options = teams["team_name"].tolist()
+            team_name_to_id = dict(zip(teams["team_name"], teams["team_id"]))
 
-            tx_col4, tx_col5, tx_col6 = st.columns(3)
-            with tx_col4:
-                from_team_name = st.selectbox(
-                    "Time origem",
-                    teams["team_name"].tolist(),
-                    index=teams["team_name"].tolist().index(selected_team_name),
-                    key="tx_form_from_team_v5a",
+            tx_type = st.selectbox(
+                "Tipo de transaction",
+                ["TRADE", "WAIVER", "FREE AGENT", "OTHER"],
+                key="tx_type_v4",
+            )
+            tx_season = st.selectbox(
+                "Season",
+                SEASONS,
+                format_func=lambda x: SEASON_LABELS[x],
+                key="tx_season_v4",
+            )
+
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                from_team_name = st.selectbox("Time A", team_options, key="tx_from_team_v4")
+
+            with col_b:
+                available_to_teams = [t for t in team_options if t != from_team_name]
+                to_team_name = st.selectbox("Time B", available_to_teams, key="tx_to_team_v4")
+
+            from_team_id = int(team_name_to_id[from_team_name])
+            to_team_id = int(team_name_to_id[to_team_name])
+
+            col_c, col_d, col_e = st.columns(3)
+
+            with col_c:
+                tx_date = st.date_input("Data", key="tx_date_v4")
+
+            with col_d:
+                initiated_by_value = (
+                    str(user.get("name") or user.get("username") or user.get("email") or user)
+                    if isinstance(user, dict)
+                    else str(user)
                 )
-            with tx_col5:
-                to_team_options = [t for t in teams["team_name"].tolist() if t != from_team_name]
-                to_team_name = st.selectbox(
-                    "Time destino",
-                    to_team_options,
-                    key="tx_form_to_team_v5a",
-                )
-            with tx_col6:
+                initiated_by = st.text_input("Iniciado por", value=initiated_by_value, key="tx_initiated_by_v4")
+
+            with col_e:
                 tx_status = st.selectbox(
                     "Status",
-                    ["Pendente", "Concluída", "Cancelada"],
-                    index=1,
-                    key="tx_form_status_v5a",
+                    ["PENDING", "APPROVED", "DONE"],
+                    index=2,
+                    key="tx_status_v4",
                 )
 
-            tx_col7, tx_col8 = st.columns([1, 2])
-            with tx_col7:
-                initiated_by = st.text_input(
-                    "Iniciada por",
-                    value=str(user) if user is not None else "",
-                    key="tx_form_initiated_by_v5a",
-                )
-            with tx_col8:
-                tx_notes = st.text_input(
-                    "Notas",
-                    key="tx_form_notes_v5a",
-                )
+            tx_notes = st.text_area("Observações", key="tx_notes_v4")
 
-            from_team_id = int(
-                teams.loc[teams["team_name"] == from_team_name, "team_id"].iloc[0]
-            )
-            to_team_id = int(
-                teams.loc[teams["team_name"] == to_team_name, "team_id"].iloc[0]
-            )
+            st.markdown(f"### Assets enviados por {from_team_name}")
 
-            source_main_df = data["roster"].loc[data["roster"]["team_id"] == from_team_id].copy()
-            source_dev_df = data["development"].loc[data["development"]["team_id"] == from_team_id].copy()
-
-            main_player_options = []
-            if not source_main_df.empty and not data["players"].empty:
-                tmp_main = source_main_df.merge(
-                    data["players"][["player_id", "player_name"]],
-                    on="player_id",
-                    how="left",
-                )
-                main_player_options = [
-                    (int(row.player_id), f"{row.player_name} (MAIN)")
-                    for row in tmp_main.itertuples()
-                ]
-
-            dev_player_options = []
-            if not source_dev_df.empty and not data["players"].empty:
-                tmp_dev = source_dev_df.merge(
-                    data["players"][["player_id", "player_name"]],
-                    on="player_id",
-                    how="left",
-                )
-                dev_player_options = [
-                    (int(row.player_id), f"{row.player_name} (DEV)")
-                    for row in tmp_dev.itertuples()
-                ]
-
-            source_pick_options = []
-            if not picks_df.empty:
-                source_team_picks = picks_df.loc[
-                    picks_df["current_team_owner_id"] == from_team_id
-                ].copy()
-                if not source_team_picks.empty:
-                    pick_id_col = source_team_picks.columns[0]
-                    for row in source_team_picks.itertuples(index=False):
-                        row_dict = row._asdict()
-                        pick_id = str(row_dict.get(pick_id_col))
-                        year = row_dict.get("year", "")
-                        rnd = row_dict.get("round", "")
-                        source_pick_options.append((pick_id, f"{pick_id} | {year} | R{rnd}"))
-
-            st.markdown("#### Itens enviados pelo time origem")
-
-            item_count = st.number_input(
-                "Quantidade de itens",
-                min_value=1,
+            from_side_count = st.number_input(
+                f"Quantidade de assets enviados por {from_team_name}",
+                min_value=0,
                 max_value=10,
                 value=1,
                 step=1,
-                key="tx_form_item_count_v5a",
+                key="from_side_count_v4",
             )
 
-            item_rows = []
-            for i in range(int(item_count)):
-                st.markdown(f"**Item {i + 1}**")
-                item_col1, item_col2, item_col3 = st.columns(3)
+            from_side_items = []
 
-                with item_col1:
+            for i in range(int(from_side_count)):
+                st.markdown(f"**Item {i+1} - {from_team_name}**")
+                c1, c2, c3 = st.columns(3)
+
+                with c1:
                     item_type = st.selectbox(
-                        "Tipo do item",
+                        "Tipo",
                         ["player", "pick"],
-                        key=f"tx_form_item_type_v5a_{i}",
+                        key=f"from_item_type_{i}",
                     )
+
+                with c2:
+                    if item_type == "player":
+                        roster_type = st.selectbox(
+                            "Origem do jogador",
+                            ["MAIN", "DEV"],
+                            key=f"from_roster_type_{i}",
+                        )
+                    else:
+                        roster_type = None
+                        st.selectbox(
+                            "Origem do jogador",
+                            ["-"],
+                            key=f"from_roster_type_placeholder_{i}",
+                            disabled=True,
+                        )
 
                 if item_type == "player":
-                    combined_player_options = main_player_options + dev_player_options
-                    player_labels = [label for _, label in combined_player_options]
+                    if roster_type == "MAIN":
+                        source_df = data["roster"].loc[data["roster"]["team_id"] == from_team_id].copy()
+                    else:
+                        source_df = data["development"].loc[data["development"]["team_id"] == from_team_id].copy()
 
-                    with item_col2:
-                        selected_player_label = st.selectbox(
-                            "Jogador",
-                            player_labels,
-                            key=f"tx_form_player_label_v5a_{i}",
+                    player_ids = source_df["player_id"].dropna().astype(int).tolist() if not source_df.empty else []
+                    player_labels = {int(pid): player_lookup.get(int(pid), str(pid)) for pid in player_ids}
+
+                    with c3:
+                        selected_asset = (
+                            st.selectbox(
+                                "Jogador",
+                                options=player_ids,
+                                format_func=lambda x: player_labels.get(x, str(x)),
+                                key=f"from_asset_player_{i}",
+                            )
+                            if player_ids
+                            else st.selectbox(
+                                "Jogador",
+                                options=[None],
+                                format_func=lambda x: "Sem jogadores disponíveis",
+                                key=f"from_asset_player_empty_{i}",
+                            )
+                        )
+                else:
+                    team_pick_ids = pick_domain_ids(data, from_team_id)
+                    pick_options = sorted(team_pick_ids)
+
+                    with c3:
+                        selected_asset = (
+                            st.selectbox(
+                                "Pick",
+                                options=pick_options,
+                                key=f"from_asset_pick_{i}",
+                            )
+                            if pick_options
+                            else st.selectbox(
+                                "Pick",
+                                options=[None],
+                                format_func=lambda x: "Sem picks disponíveis",
+                                key=f"from_asset_pick_empty_{i}",
+                            )
                         )
 
-                    player_match = next(
-                        (opt for opt in combined_player_options if opt[1] == selected_player_label),
-                        None,
+                target_roster_type = (
+                    "MAIN" if item_type == "player" and roster_type == "MAIN"
+                    else "DEV" if item_type == "player" and roster_type == "DEV"
+                    else None
+                )
+
+                from_side_items.append({
+                    "item_id": i + 1,
+                    "item_type": item_type,
+                    "asset_id": selected_asset,
+                    "from_team_id": from_team_id,
+                    "to_team_id": to_team_id,
+                    "from_roster_type": roster_type,
+                    "to_roster_type": target_roster_type,
+                })
+
+            st.markdown(f"### Assets enviados por {to_team_name}")
+
+            to_side_count = st.number_input(
+                f"Quantidade de assets enviados por {to_team_name}",
+                min_value=0,
+                max_value=10,
+                value=1,
+                step=1,
+                key="to_side_count_v4",
+            )
+
+            to_side_items = []
+
+            for i in range(int(to_side_count)):
+                st.markdown(f"**Item {i+1} - {to_team_name}**")
+                c1, c2, c3 = st.columns(3)
+
+                with c1:
+                    item_type = st.selectbox(
+                        "Tipo",
+                        ["player", "pick"],
+                        key=f"to_item_type_{i}",
                     )
 
-                    asset_id = player_match[0] if player_match else None
-                    from_roster_type = "MAIN" if selected_player_label.endswith("(MAIN)") else "DEV"
-
-                    with item_col3:
-                        to_roster_type = st.selectbox(
-                            "Destino do jogador",
+                with c2:
+                    if item_type == "player":
+                        roster_type = st.selectbox(
+                            "Origem do jogador",
                             ["MAIN", "DEV"],
-                            index=0 if from_roster_type == "MAIN" else 1,
-                            key=f"tx_form_to_roster_type_v5a_{i}",
+                            key=f"to_roster_type_{i}",
+                        )
+                    else:
+                        roster_type = None
+                        st.selectbox(
+                            "Origem do jogador",
+                            ["-"],
+                            key=f"to_roster_type_placeholder_{i}",
+                            disabled=True,
                         )
 
-                    item_rows.append(
-                        {
-                            "item_id": i + 1,
-                            "item_type": "player",
-                            "asset_id": asset_id,
-                            "from_roster_type": from_roster_type,
-                            "to_roster_type": to_roster_type,
-                        }
-                    )
+                if item_type == "player":
+                    if roster_type == "MAIN":
+                        source_df = data["roster"].loc[data["roster"]["team_id"] == to_team_id].copy()
+                    else:
+                        source_df = data["development"].loc[data["development"]["team_id"] == to_team_id].copy()
 
+                    player_ids = source_df["player_id"].dropna().astype(int).tolist() if not source_df.empty else []
+                    player_labels = {int(pid): player_lookup.get(int(pid), str(pid)) for pid in player_ids}
+
+                    with c3:
+                        selected_asset = (
+                            st.selectbox(
+                                "Jogador",
+                                options=player_ids,
+                                format_func=lambda x: player_labels.get(x, str(x)),
+                                key=f"to_asset_player_{i}",
+                            )
+                            if player_ids
+                            else st.selectbox(
+                                "Jogador",
+                                options=[None],
+                                format_func=lambda x: "Sem jogadores disponíveis",
+                                key=f"to_asset_player_empty_{i}",
+                            )
+                        )
                 else:
-                    pick_labels = [label for _, label in source_pick_options]
+                    team_pick_ids = pick_domain_ids(data, to_team_id)
+                    pick_options = sorted(team_pick_ids)
 
-                    with item_col2:
-                        selected_pick_label = st.selectbox(
-                            "Pick",
-                            pick_labels if pick_labels else ["Sem picks disponíveis"],
-                            key=f"tx_form_pick_label_v5a_{i}",
+                    with c3:
+                        selected_asset = (
+                            st.selectbox(
+                                "Pick",
+                                options=pick_options,
+                                key=f"to_asset_pick_{i}",
+                            )
+                            if pick_options
+                            else st.selectbox(
+                                "Pick",
+                                options=[None],
+                                format_func=lambda x: "Sem picks disponíveis",
+                                key=f"to_asset_pick_empty_{i}",
+                            )
                         )
 
-                    pick_match = next(
-                        (opt for opt in source_pick_options if opt[1] == selected_pick_label),
-                        None,
-                    )
+                target_roster_type = (
+                    "MAIN" if item_type == "player" and roster_type == "MAIN"
+                    else "DEV" if item_type == "player" and roster_type == "DEV"
+                    else None
+                )
 
-                    asset_id = pick_match[0] if pick_match else None
+                to_side_items.append({
+                    "item_id": int(from_side_count) + i + 1,
+                    "item_type": item_type,
+                    "asset_id": selected_asset,
+                    "from_team_id": to_team_id,
+                    "to_team_id": from_team_id,
+                    "from_roster_type": roster_type,
+                    "to_roster_type": target_roster_type,
+                })
 
-                    with item_col3:
-                        st.markdown("Destino automático: picks")
+            all_item_rows = from_side_items + to_side_items
 
-                    item_rows.append(
-                        {
-                            "item_id": i + 1,
-                            "item_type": "pick",
-                            "asset_id": asset_id,
-                            "from_roster_type": None,
-                            "to_roster_type": None,
-                        }
-                    )
+            save_tx = st.button("Salvar transaction", type="primary", key="save_tx_v4")
 
-            save_tx = st.button("Salvar transaction", key="tx_form_save_v5a", type="primary")
+            if save_tx:
+                form_errors = []
 
-        if save_tx:
-            form_errors = []
+                if from_team_id == to_team_id:
+                    form_errors.append("Time A e Time B não podem ser iguais.")
 
-            if from_team_id == to_team_id:
-                form_errors.append("Time origem e destino não podem ser iguais.")
+                valid_item_rows = []
+                for idx, row in enumerate(all_item_rows, start=1):
+                    if row["asset_id"] in [None, "", "Sem jogadores disponíveis", "Sem picks disponíveis"]:
+                        form_errors.append(f"Item {idx}: asset inválido.")
+                    else:
+                        valid_item_rows.append(row)
 
-            cleaned_item_rows = []
-            for row in item_rows:
-                if row["asset_id"] in [None, "", "Sem picks disponíveis"]:
-                    form_errors.append("Há item sem asset válido selecionado.")
+                if not valid_item_rows:
+                    form_errors.append("A transaction precisa ter ao menos um asset válido.")
+
+                validation_errors = validate_items_bilateral(data, valid_item_rows)
+                form_errors.extend(validation_errors)
+
+                if form_errors:
+                    for err in form_errors:
+                        st.error(err)
                 else:
-                    cleaned_item_rows.append(row)
+                    tx_id_col = "transaction_id" if "transaction_id" in tx_base_df.columns else "transactionid"
+                    next_tx_id = get_next_id(tx_base_df, tx_id_col, start=1)
 
-            validation_errors = validate_items(data, from_team_id, cleaned_item_rows)
-            form_errors.extend(validation_errors)
+                    tx_row = {
+                        tx_id_col: next_tx_id,
+                        "transaction_date" if "transaction_date" in tx_base_df.columns else "transactiondate": str(tx_date),
+                        "transaction_type" if "transaction_type" in tx_base_df.columns else "transactiontype": tx_type,
+                        "season": tx_season,
+                        "from_team_id" if "from_team_id" in tx_base_df.columns else "fromteamid": from_team_id,
+                        "to_team_id" if "to_team_id" in tx_base_df.columns else "toteamid": to_team_id,
+                        "initiated_by" if "initiated_by" in tx_base_df.columns else "initiatedby": initiated_by,
+                        "status": tx_status,
+                        "notes": tx_notes,
+                    }
 
-            if form_errors:
-                for err in form_errors:
-                    st.error(err)
-            else:
-                tx_id_col = "transaction_id" if "transaction_id" in tx_base_df.columns else "transactionid"
-                next_tx_id = get_next_id(tx_base_df, tx_id_col, start=1)
+                    prepared_items = []
+                    item_id_col = "item_id" if (not transaction_items_df.empty and "item_id" in transaction_items_df.columns) else "itemid"
+                    transaction_id_col = "transaction_id" if (not transaction_items_df.empty and "transaction_id" in transaction_items_df.columns) else "transactionid"
+                    item_type_col = "item_type" if (not transaction_items_df.empty and "item_type" in transaction_items_df.columns) else "itemtype"
+                    asset_id_col = "asset_id" if (not transaction_items_df.empty and "asset_id" in transaction_items_df.columns) else "assetid"
+                    from_rt_col = "from_roster_type" if (not transaction_items_df.empty and "from_roster_type" in transaction_items_df.columns) else "fromrostertype"
+                    to_rt_col = "to_roster_type" if (not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns) else "torostertype"
+                    from_team_col = "from_team_id" if (not transaction_items_df.empty and "from_team_id" in transaction_items_df.columns) else "fromteamid"
+                    to_team_col = "to_team_id" if (not transaction_items_df.empty and "to_team_id" in transaction_items_df.columns) else "toteamid"
 
-                tx_row = {
-                    tx_id_col: next_tx_id,
-                    "transaction_date" if "transaction_date" in tx_base_df.columns else "transactiondate": str(tx_date),
-                    "transaction_type" if "transaction_type" in tx_base_df.columns else "transactiontype": tx_type,
-                    "season": tx_season,
-                    "from_team_id" if "from_team_id" in tx_base_df.columns else "fromteamid": from_team_id,
-                    "to_team_id" if "to_team_id" in tx_base_df.columns else "toteamid": to_team_id,
-                    "initiated_by" if "initiated_by" in tx_base_df.columns else "initiatedby": initiated_by,
-                    "status": tx_status,
-                    "notes": tx_notes,
-                }
+                    for row in valid_item_rows:
+                        prepared_items.append({
+                            transaction_id_col: next_tx_id,
+                            item_id_col: row["item_id"],
+                            item_type_col: row["item_type"],
+                            asset_id_col: row["asset_id"],
+                            from_rt_col: row["from_roster_type"],
+                            to_rt_col: row["to_roster_type"],
+                            from_team_col: row["from_team_id"],
+                            to_team_col: row["to_team_id"],
+                        })
 
-                prepared_items = []
-                for row in cleaned_item_rows:
-                    prepared_items.append(
-                        {
-                            "transaction_id" if not transaction_items_df.empty and "transaction_id" in transaction_items_df.columns else "transactionid": next_tx_id,
-                            "item_id" if not transaction_items_df.empty and "item_id" in transaction_items_df.columns else "itemid": row["item_id"],
-                            "item_type" if not transaction_items_df.empty and "item_type" in transaction_items_df.columns else "itemtype": row["item_type"],
-                            "asset_id" if not transaction_items_df.empty and "asset_id" in transaction_items_df.columns else "assetid": row["asset_id"],
-                            "from_roster_type" if not transaction_items_df.empty and "from_roster_type" in transaction_items_df.columns else "fromrostertype": row["from_roster_type"],
-                            "to_roster_type" if not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns else "torostertype": row["to_roster_type"],
-                        }
-                    )
+                    append_transaction(str(DEFAULT_FILE), tx_row, prepared_items)
+                    update_rosters(str(DEFAULT_FILE), tx_row, prepared_items)
 
-                append_transaction(str(DEFAULT_FILE), tx_row, prepared_items)
-                update_rosters(str(DEFAULT_FILE), tx_row, prepared_items)
-
-                st.cache_data.clear()
-                st.success("Transaction salva e aplicada com sucesso.")
-                st.rerun()
+                    st.cache_data.clear()
+                    st.success("Transaction salva e aplicada com sucesso.")
+                    st.rerun()
 
     st.subheader("Histórico de transactions")
 
@@ -558,30 +633,19 @@ with tab_transactions:
         type_options = ["Todas"]
         if "transaction_type" in team_transactions_df.columns:
             type_options += sorted(
-                team_transactions_df["transaction_type"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
+                team_transactions_df["transaction_type"].dropna().astype(str).unique().tolist()
             )
 
         status_options = ["Todos"]
         if "status" in team_transactions_df.columns:
             status_options += sorted(
-                team_transactions_df["status"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
+                team_transactions_df["status"].dropna().astype(str).unique().tolist()
             )
+
         season_options = ["Todas"]
         if "season" in team_transactions_df.columns:
             season_options += sorted(
-                team_transactions_df["season"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
+                team_transactions_df["season"].dropna().astype(str).unique().tolist()
             )
 
         with filter_col1:
@@ -614,18 +678,14 @@ with tab_transactions:
         metric_cols[0].metric("Transactions", len(filtered_tx))
         metric_cols[1].metric(
             "Tipos distintos",
-            filtered_tx["transaction_type"].nunique()
-            if "transaction_type" in filtered_tx.columns else 0,
+            filtered_tx["transaction_type"].nunique() if "transaction_type" in filtered_tx.columns else 0,
         )
         metric_cols[2].metric(
             "Seasons",
-            filtered_tx["season"].nunique()
-            if "season" in filtered_tx.columns else 0,
+            filtered_tx["season"].nunique() if "season" in filtered_tx.columns else 0,
         )
 
         st.dataframe(filtered_tx, use_container_width=True, hide_index=True)
-
-    st.divider()
 
     if not is_admin:
         st.caption("Somente administradores podem criar, editar ou cancelar transactions.")

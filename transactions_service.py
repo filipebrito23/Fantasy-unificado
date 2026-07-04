@@ -1,5 +1,3 @@
-# transactions_service.py
-
 import pandas as pd
 from openpyxl import load_workbook
 
@@ -56,6 +54,32 @@ def validate_items(data, from_team_id: int, item_rows: list[dict]) -> list[str]:
     return errors
 
 
+def validate_items_bilateral(data, item_rows: list[dict]) -> list[str]:
+    errors = []
+
+    for i, item in enumerate(item_rows, start=1):
+        item_type = item.get("item_type", item.get("itemtype"))
+        asset_id = item.get("asset_id", item.get("assetid"))
+        from_team_id = item.get("from_team_id", item.get("fromteamid"))
+
+        if from_team_id is None:
+            errors.append(f"Item {i}: sem time de origem.")
+            continue
+
+        from_team_id = int(from_team_id)
+
+        player_ids = roster_domain_ids(data, from_team_id)
+        pick_ids = pick_domain_ids(data, from_team_id)
+
+        if item_type == "player" and asset_id not in player_ids:
+            errors.append(f"Item {i}: jogador fora do domínio do time origem.")
+
+        if item_type == "pick" and str(asset_id) not in pick_ids:
+            errors.append(f"Item {i}: pick fora do domínio do time origem.")
+
+    return errors
+
+
 def append_transaction(file_path: str, tx_row: dict, item_rows: list[dict]):
     wb = load_workbook(file_path)
 
@@ -87,25 +111,20 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     dev_df = load_sheet_df(wb, "development")
     picks_df = load_sheet_df(wb, "picks")
 
-    from_team_id = tx_row.get("from_team_id", tx_row.get("fromteamid"))
-    to_team_id = tx_row.get("to_team_id", tx_row.get("toteamid"))
-
-    if from_team_id is None or to_team_id is None:
-        raise ValueError("Transaction sem from_team_id/to_team_id válidos.")
-
-    from_team_id = int(from_team_id)
-    to_team_id = int(to_team_id)
-
     for item in item_rows:
         item_type = item.get("item_type", item.get("itemtype"))
         asset_id = item.get("asset_id", item.get("assetid"))
+        from_team_id = item.get("from_team_id", item.get("fromteamid"))
+        to_team_id = item.get("to_team_id", item.get("toteamid"))
         from_roster_type = item.get("from_roster_type", item.get("fromrostertype"))
-        to_roster_type = item.get("to_roster_type", item.get("torostertype"))
+
+        if from_team_id is None or to_team_id is None or asset_id is None:
+            continue
+
+        from_team_id = int(from_team_id)
+        to_team_id = int(to_team_id)
 
         if item_type == "player":
-            if asset_id is None:
-                continue
-
             pid = int(asset_id)
 
             if str(from_roster_type).strip().upper() == "MAIN" and not roster_df.empty:
@@ -123,9 +142,6 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
                 dev_df.loc[mask, "team_id"] = to_team_id
 
         elif item_type == "pick" and not picks_df.empty:
-            if asset_id is None:
-                continue
-
             id_col = picks_df.columns[0]
             owner_cols = [c for c in picks_df.columns if "owner" in c.lower() or "team" in c.lower()]
 
@@ -142,15 +158,6 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     save_sheet_df(wb, "picks", picks_df)
 
     wb.save(file_path)
-
-
-def compact_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out.columns = [
-        str(c).strip().lower().replace("_", "").replace(" ", "")
-        for c in out.columns
-    ]
-    return out
 
 
 def compact_columns(df: pd.DataFrame) -> pd.DataFrame:
