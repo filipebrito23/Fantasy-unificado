@@ -3,8 +3,8 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
-from db_v5 import engine, init_db_v5
-from auth_v5 import create_user_v5
+from app_lib.db_v5 import engine, init_db_v5
+from app_lib.auth_v5 import create_user_v5
 
 POSITION_SHEETS = ["PG", "PG_SG", "SG", "SG_SF", "SF", "SF_PF", "PF", "PF_C", "C"]
 

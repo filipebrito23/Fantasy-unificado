@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from data_loader import load_workbook_data
+from app_lib.data_loader import load_workbook_data
 
 DEFAULT_FILE = Path("roster.xlsx")
 GAMES_SHEET = "games"

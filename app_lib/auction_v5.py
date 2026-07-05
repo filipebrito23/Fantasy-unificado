@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
-from db_v5 import engine
+from app_lib.db_v5 import engine
 
 def utc_now_iso_v5():
     return datetime.now(timezone.utc).isoformat()

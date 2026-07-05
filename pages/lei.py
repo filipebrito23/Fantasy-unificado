@@ -5,9 +5,9 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
-from db_v5 import engine
-from auth_v5 import get_all_users_v5, create_user_v5, change_password_v5
-from auction_v5 import (
+from app_lib.db_v5 import engine
+from app_lib.auth_v5 import get_all_users_v5, create_user_v5, change_password_v5
+from app_lib.auction_v5 import (
     submit_bid_v5,
     get_players_with_state_v5,
     get_bid_history_v5,

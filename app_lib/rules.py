@@ -1,4 +1,4 @@
-from data_loader import FINE_COLS
+from app_lib.data_loader import FINE_COLS
 
 
 def get_salary_penalty_rate(salary: float) -> float:

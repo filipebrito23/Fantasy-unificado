@@ -1,5 +1,5 @@
 import pandas as pd
-from data_loader import SEASONS, FINE_COLS
+from app_lib.data_loader import SEASONS, FINE_COLS
 
 SEASON_LABELS = {
     "26_27": "2026-27",

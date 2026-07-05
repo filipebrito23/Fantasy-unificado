@@ -3,7 +3,7 @@
 import pandas as pd
 import streamlit as st
 
-from transforms import SEASON_LABELS
+from app_lib.transforms import SEASON_LABELS
 
 
 def currency(v) -> str:

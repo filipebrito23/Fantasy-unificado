@@ -1,6 +1,6 @@
 import bcrypt
 from sqlalchemy import text
-from db_v5 import engine
+from app_lib.db_v5 import engine
 
 
 def hash_password_v5(password: str) -> str:
