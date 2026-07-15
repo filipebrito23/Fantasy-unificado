@@ -39,6 +39,32 @@ def pick_domain_ids(data, team_id: int) -> set:
         .tolist()
     )
 
+def make_unique_columns(columns) -> list[str]:
+    seen = {}
+    new_cols = []
+
+    for col in columns:
+        base = "" if col is None else str(col).strip()
+        if base not in seen:
+            seen[base] = 0
+            new_cols.append(base)
+        else:
+            seen[base] += 1
+            new_cols.append(f"{base}__dup{seen[base]}")
+    return new_cols
+
+
+def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+    out.columns = make_unique_columns(out.columns)
+
+    # Se quiser ser mais agressivo e descartar duplicatas após a 1ª ocorrência:
+    # out = out.loc[:, ~out.columns.duplicated()].copy()
+
+    return out
 
 def validate_items(data, from_team_id: int, item_rows: list[dict]) -> list[str]:
     errors = []
@@ -83,8 +109,8 @@ def validate_items_bilateral(data, item_rows: list[dict]) -> list[str]:
 def append_transaction(file_path: str, tx_row: dict, item_rows: list[dict]):
     wb = load_workbook(file_path)
 
-    tx_df = load_sheet_df(wb, TX_SHEET)
-    items_df = load_sheet_df(wb, TX_ITEMS_SHEET)
+    tx_df = ensure_unique_columns(load_sheet_df(wb, TX_SHEET))
+    items_df = ensure_unique_columns(load_sheet_df(wb, TX_ITEMS_SHEET))
 
     if tx_df.empty and TX_SHEET not in wb.sheetnames:
         tx_df = pd.DataFrame(columns=list(tx_row.keys()))
@@ -92,10 +118,12 @@ def append_transaction(file_path: str, tx_row: dict, item_rows: list[dict]):
     if items_df.empty and TX_ITEMS_SHEET not in wb.sheetnames and item_rows:
         items_df = pd.DataFrame(columns=list(item_rows[0].keys()))
 
-    tx_df = pd.concat([tx_df, pd.DataFrame([tx_row])], ignore_index=True)
+    new_tx_df = ensure_unique_columns(pd.DataFrame([tx_row]))
+    tx_df = pd.concat([tx_df, new_tx_df], ignore_index=True)
 
     if item_rows:
-        items_df = pd.concat([items_df, pd.DataFrame(item_rows)], ignore_index=True)
+        new_items_df = ensure_unique_columns(pd.DataFrame(item_rows))
+        items_df = pd.concat([items_df, new_items_df], ignore_index=True)
 
     save_sheet_df(wb, TX_SHEET, tx_df)
     if item_rows:

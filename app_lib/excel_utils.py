@@ -17,6 +17,29 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     out = out.where(pd.notna(out), None)
     return out
 
+def make_unique_columns(columns) -> list[str]:
+    seen = {}
+    new_cols = []
+
+    for col in columns:
+        base = "" if col is None else str(col).strip()
+        if base not in seen:
+            seen[base] = 0
+            new_cols.append(base)
+        else:
+            seen[base] += 1
+            new_cols.append(f"{base}__dup{seen[base]}")
+    return new_cols
+
+
+def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+    out.columns = make_unique_columns(out.columns)
+    return out
+
 
 def find_sheet_name(wb, sheet_name: str) -> str | None:
     target = str(sheet_name).strip().lower()
@@ -45,23 +68,17 @@ def find_sheet_name(wb, sheet_name: str) -> str | None:
 
 
 def load_sheet_df(wb, sheet_name: str) -> pd.DataFrame:
-    real_name = find_sheet_name(wb, sheet_name)
-    if real_name is None:
+    if sheet_name not in wb.sheetnames:
         return pd.DataFrame()
 
-    ws = wb[real_name]
+    ws = wb[sheet_name]
     rows = list(ws.values)
-
     if not rows:
         return pd.DataFrame()
 
-    header = rows[0]
-    data_rows = rows[1:]
-
-    if header is None:
-        return pd.DataFrame()
-
-    return pd.DataFrame(data_rows, columns=header)
+    headers = make_unique_columns(rows[0])
+    df = pd.DataFrame(rows[1:], columns=headers)
+    return ensure_unique_columns(df)
 
 
 def save_sheet_df(wb, sheet_name: str, df: pd.DataFrame):
