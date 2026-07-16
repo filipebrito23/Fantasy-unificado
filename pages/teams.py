@@ -305,7 +305,7 @@ with tab_transactions:
 
             tx_type = st.selectbox(
                 "Tipo de transaction",
-                ["TRADE", "WAIVER", "FREE AGENT", "OTHER"],
+                ["TRADE", "WAIVER", "FREE AGENT", "OTHER", "ROSTER_MOVE"],
                 key="tx_type_v4",
             )
             tx_season = st.selectbox(
@@ -321,11 +321,14 @@ with tab_transactions:
                 from_team_name = st.selectbox("Time A", team_options, key="tx_from_team_v4")
 
             with col_b:
-                available_to_teams = [t for t in team_options if t != from_team_name]
-                to_team_name = st.selectbox("Time B", available_to_teams, key="tx_to_team_v4")
+                to_team_name = st.selectbox("Time B", team_options, key="tx_to_team_v4")
 
             from_team_id = int(team_name_to_id[from_team_name])
             to_team_id = int(team_name_to_id[to_team_name])
+            same_team = from_team_id == to_team_id
+
+            if same_team:
+                st.info("Movimentação interna do mesmo time: use isso para promover/demover entre MAIN e DEV.")
 
             col_c, col_d, col_e = st.columns(3)
 
@@ -365,7 +368,7 @@ with tab_transactions:
 
             for i in range(int(from_side_count)):
                 st.markdown(f"**Item {i+1} - {from_team_name}**")
-                c1, c2, c3 = st.columns(3)
+                c1, c2, c3, c4 = st.columns(4)
 
                 with c1:
                     item_type = st.selectbox(
@@ -374,29 +377,28 @@ with tab_transactions:
                         key=f"from_item_type_{i}",
                     )
 
-                with c2:
-                    if item_type == "player":
-                        roster_type = st.selectbox(
+                if item_type == "player":
+                    with c2:
+                        from_roster_type = st.selectbox(
                             "Origem do jogador",
                             ["MAIN", "DEV"],
                             key=f"from_roster_type_{i}",
                         )
-                    else:
-                        roster_type = None
-                        st.selectbox(
-                            "Origem do jogador",
-                            ["-"],
-                            key=f"from_roster_type_placeholder_{i}",
-                            disabled=True,
-                        )
 
-                if item_type == "player":
-                    if roster_type == "MAIN":
+                    if from_roster_type == "MAIN":
                         source_df = data["roster"].loc[data["roster"]["team_id"] == from_team_id].copy()
                     else:
                         source_df = data["development"].loc[data["development"]["team_id"] == from_team_id].copy()
 
-                    player_ids = source_df["player_id"].dropna().astype(int).tolist() if not source_df.empty else []
+                    player_ids = []
+                    if not source_df.empty and "player_id" in source_df.columns:
+                        player_ids = (
+                            pd.to_numeric(source_df["player_id"], errors="coerce")
+                            .dropna()
+                            .astype(int)
+                            .tolist()
+                        )
+
                     player_labels = {int(pid): player_lookup.get(int(pid), str(pid)) for pid in player_ids}
 
                     with c3:
@@ -415,7 +417,35 @@ with tab_transactions:
                                 key=f"from_asset_player_empty_{i}",
                             )
                         )
+
+                    with c4:
+                        if same_team:
+                            roster_dest_options = [rt for rt in ["MAIN", "DEV"] if rt != from_roster_type]
+                            to_roster_type = st.selectbox(
+                                "Destino do jogador",
+                                roster_dest_options,
+                                key=f"from_to_roster_type_{i}",
+                            )
+                        else:
+                            to_roster_type = from_roster_type
+                            st.selectbox(
+                                "Destino do jogador",
+                                [to_roster_type],
+                                key=f"from_to_roster_type_locked_{i}",
+                                disabled=True,
+                            )
                 else:
+                    from_roster_type = None
+                    to_roster_type = None
+
+                    with c2:
+                        st.selectbox(
+                            "Origem do jogador",
+                            ["-"],
+                            key=f"from_roster_type_placeholder_{i}",
+                            disabled=True,
+                        )
+
                     team_pick_ids = pick_domain_ids(data, from_team_id)
                     pick_options = sorted(team_pick_ids)
 
@@ -435,11 +465,13 @@ with tab_transactions:
                             )
                         )
 
-                target_roster_type = (
-                    "MAIN" if item_type == "player" and roster_type == "MAIN"
-                    else "DEV" if item_type == "player" and roster_type == "DEV"
-                    else None
-                )
+                    with c4:
+                        st.selectbox(
+                            "Destino do jogador",
+                            ["-"],
+                            key=f"from_to_roster_type_placeholder_{i}",
+                            disabled=True,
+                        )
 
                 from_side_items.append({
                     "item_id": i + 1,
@@ -447,8 +479,8 @@ with tab_transactions:
                     "asset_id": selected_asset,
                     "from_team_id": from_team_id,
                     "to_team_id": to_team_id,
-                    "from_roster_type": roster_type,
-                    "to_roster_type": target_roster_type,
+                    "from_roster_type": from_roster_type,
+                    "to_roster_type": to_roster_type,
                 })
 
             st.markdown(f"### Assets enviados por {to_team_name}")
@@ -466,7 +498,7 @@ with tab_transactions:
 
             for i in range(int(to_side_count)):
                 st.markdown(f"**Item {i+1} - {to_team_name}**")
-                c1, c2, c3 = st.columns(3)
+                c1, c2, c3, c4 = st.columns(4)
 
                 with c1:
                     item_type = st.selectbox(
@@ -475,29 +507,28 @@ with tab_transactions:
                         key=f"to_item_type_{i}",
                     )
 
-                with c2:
-                    if item_type == "player":
-                        roster_type = st.selectbox(
+                if item_type == "player":
+                    with c2:
+                        from_roster_type = st.selectbox(
                             "Origem do jogador",
                             ["MAIN", "DEV"],
                             key=f"to_roster_type_{i}",
                         )
-                    else:
-                        roster_type = None
-                        st.selectbox(
-                            "Origem do jogador",
-                            ["-"],
-                            key=f"to_roster_type_placeholder_{i}",
-                            disabled=True,
-                        )
 
-                if item_type == "player":
-                    if roster_type == "MAIN":
+                    if from_roster_type == "MAIN":
                         source_df = data["roster"].loc[data["roster"]["team_id"] == to_team_id].copy()
                     else:
                         source_df = data["development"].loc[data["development"]["team_id"] == to_team_id].copy()
 
-                    player_ids = source_df["player_id"].dropna().astype(int).tolist() if not source_df.empty else []
+                    player_ids = []
+                    if not source_df.empty and "player_id" in source_df.columns:
+                        player_ids = (
+                            pd.to_numeric(source_df["player_id"], errors="coerce")
+                            .dropna()
+                            .astype(int)
+                            .tolist()
+                        )
+
                     player_labels = {int(pid): player_lookup.get(int(pid), str(pid)) for pid in player_ids}
 
                     with c3:
@@ -516,7 +547,35 @@ with tab_transactions:
                                 key=f"to_asset_player_empty_{i}",
                             )
                         )
+
+                    with c4:
+                        if same_team:
+                            roster_dest_options = [rt for rt in ["MAIN", "DEV"] if rt != from_roster_type]
+                            to_roster_type = st.selectbox(
+                                "Destino do jogador",
+                                roster_dest_options,
+                                key=f"to_to_roster_type_{i}",
+                            )
+                        else:
+                            to_roster_type = from_roster_type
+                            st.selectbox(
+                                "Destino do jogador",
+                                [to_roster_type],
+                                key=f"to_to_roster_type_locked_{i}",
+                                disabled=True,
+                            )
                 else:
+                    from_roster_type = None
+                    to_roster_type = None
+
+                    with c2:
+                        st.selectbox(
+                            "Origem do jogador",
+                            ["-"],
+                            key=f"to_roster_type_placeholder_{i}",
+                            disabled=True,
+                        )
+
                     team_pick_ids = pick_domain_ids(data, to_team_id)
                     pick_options = sorted(team_pick_ids)
 
@@ -536,11 +595,13 @@ with tab_transactions:
                             )
                         )
 
-                target_roster_type = (
-                    "MAIN" if item_type == "player" and roster_type == "MAIN"
-                    else "DEV" if item_type == "player" and roster_type == "DEV"
-                    else None
-                )
+                    with c4:
+                        st.selectbox(
+                            "Destino do jogador",
+                            ["-"],
+                            key=f"to_to_roster_type_placeholder_{i}",
+                            disabled=True,
+                        )
 
                 to_side_items.append({
                     "item_id": int(from_side_count) + i + 1,
@@ -548,8 +609,8 @@ with tab_transactions:
                     "asset_id": selected_asset,
                     "from_team_id": to_team_id,
                     "to_team_id": from_team_id,
-                    "from_roster_type": roster_type,
-                    "to_roster_type": target_roster_type,
+                    "from_roster_type": from_roster_type,
+                    "to_roster_type": to_roster_type,
                 })
 
             all_item_rows = from_side_items + to_side_items
@@ -558,9 +619,6 @@ with tab_transactions:
 
             if save_tx:
                 form_errors = []
-
-                if from_team_id == to_team_id:
-                    form_errors.append("Time A e Time B não podem ser iguais.")
 
                 valid_item_rows = []
                 for idx, row in enumerate(all_item_rows, start=1):
@@ -571,6 +629,28 @@ with tab_transactions:
 
                 if not valid_item_rows:
                     form_errors.append("A transaction precisa ter ao menos um asset válido.")
+
+                has_internal_player_move = any(
+                    row["item_type"] == "player"
+                    and str(row.get("from_roster_type", "")).upper() != str(row.get("to_roster_type", "")).upper()
+                    for row in valid_item_rows
+                )
+
+                if same_team and not has_internal_player_move:
+                    form_errors.append(
+                        "Time A e Time B iguais só é permitido para promoção/demotion entre MAIN e DEV."
+                    )
+
+                if same_team:
+                    invalid_same_team_items = [
+                        row for row in valid_item_rows
+                        if row["item_type"] != "player"
+                        or str(row.get("from_roster_type", "")).upper() == str(row.get("to_roster_type", "")).upper()
+                    ]
+                    if invalid_same_team_items:
+                        form_errors.append(
+                            "Com o mesmo time, todos os itens devem ser players mudando entre MAIN e DEV."
+                        )
 
                 validation_errors = validate_items_bilateral(data, valid_item_rows)
                 form_errors.extend(validation_errors)

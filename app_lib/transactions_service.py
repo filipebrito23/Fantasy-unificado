@@ -1,7 +1,7 @@
 import pandas as pd
 from openpyxl import load_workbook
 
-from app_lib.excel_utils import load_sheet_df, save_sheet_df
+from app_lib.excel_utils import load_sheet_df, save_sheet_df, ensure_unique_columns
 
 TX_SHEET = "transactions"
 TX_ITEMS_SHEET = "transactionitems"
@@ -52,43 +52,30 @@ def pick_domain_ids(data, team_id: int) -> set:
         .tolist()
     )
 
-def make_unique_columns(columns) -> list[str]:
-    seen = {}
-    new_cols = []
-
-    for col in columns:
-        base = "" if col is None else str(col).strip()
-        if base not in seen:
-            seen[base] = 0
-            new_cols.append(base)
-        else:
-            seen[base] += 1
-            new_cols.append(f"{base}__dup{seen[base]}")
-    return new_cols
-
-
-def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-
-    out = df.copy()
-    out.columns = make_unique_columns(out.columns)
-
-    # Se quiser ser mais agressivo e descartar duplicatas após a 1ª ocorrência:
-    # out = out.loc[:, ~out.columns.duplicated()].copy()
-
-    return out
 
 def validate_items(data, from_team_id: int, item_rows: list[dict]) -> list[str]:
     errors = []
-    player_ids = roster_domain_ids(data, from_team_id, item.get("from_roster_type"))
-    pick_ids = pick_domain_ids(data, from_team_id)
 
     for i, item in enumerate(item_rows, start=1):
-        if item["item_type"] == "player" and item["asset_id"] not in player_ids:
-            errors.append(f"Item {i}: jogador fora do domínio do time origem.")
-        if item["item_type"] == "pick" and str(item["asset_id"]) not in pick_ids:
-            errors.append(f"Item {i}: pick fora do domínio do time origem.")
+        item_type = str(item.get("item_type", "")).strip().lower()
+        asset_id = item.get("asset_id")
+        from_roster_type = item.get("from_roster_type")
+
+        player_ids = roster_domain_ids(data, from_team_id, from_roster_type)
+        pick_ids = pick_domain_ids(data, from_team_id)
+
+        if item_type == "player":
+            try:
+                asset_id_int = int(asset_id)
+            except Exception:
+                asset_id_int = None
+
+            if asset_id_int is None or asset_id_int not in player_ids:
+                errors.append(f"Item {i}: jogador fora do domínio do time origem.")
+
+        if item_type == "pick":
+            if str(asset_id) not in pick_ids:
+                errors.append(f"Item {i}: pick fora do domínio do time origem.")
 
     return errors
 
@@ -97,24 +84,58 @@ def validate_items_bilateral(data, item_rows: list[dict]) -> list[str]:
     errors = []
 
     for i, item in enumerate(item_rows, start=1):
-        item_type = item.get("item_type", item.get("itemtype"))
+        item_type = str(item.get("item_type", item.get("itemtype", ""))).strip().lower()
         asset_id = item.get("asset_id", item.get("assetid"))
         from_team_id = item.get("from_team_id", item.get("fromteamid"))
+        to_team_id = item.get("to_team_id", item.get("toteamid"))
+        from_roster_type = str(item.get("from_roster_type", item.get("fromrostertype", ""))).strip().upper()
+        to_roster_type = str(item.get("to_roster_type", item.get("torostertype", ""))).strip().upper()
 
         if from_team_id is None:
             errors.append(f"Item {i}: sem time de origem.")
             continue
 
-        from_team_id = int(from_team_id)
+        try:
+            from_team_id = int(from_team_id)
+        except Exception:
+            errors.append(f"Item {i}: time de origem inválido.")
+            continue
 
-        player_ids = roster_domain_ids(data, from_team_id)
-        pick_ids = pick_domain_ids(data, from_team_id)
+        try:
+            to_team_id = int(to_team_id) if to_team_id is not None else None
+        except Exception:
+            to_team_id = None
 
-        if item_type == "player" and asset_id not in player_ids:
-            errors.append(f"Item {i}: jogador fora do domínio do time origem.")
+        same_team = to_team_id is not None and from_team_id == to_team_id
 
-        if item_type == "pick" and str(asset_id) not in pick_ids:
-            errors.append(f"Item {i}: pick fora do domínio do time origem.")
+        if item_type == "player":
+            try:
+                asset_id_int = int(asset_id)
+            except Exception:
+                errors.append(f"Item {i}: jogador inválido.")
+                continue
+
+            player_ids = roster_domain_ids(data, from_team_id, from_roster_type)
+            if asset_id_int not in player_ids:
+                errors.append(f"Item {i}: jogador fora do domínio do time origem.")
+                continue
+
+            if same_team:
+                if from_roster_type not in {"MAIN", "DEV"} or to_roster_type not in {"MAIN", "DEV"}:
+                    errors.append(f"Item {i}: movimentação interna exige MAIN/DEV válidos.")
+                elif from_roster_type == to_roster_type:
+                    errors.append(f"Item {i}: movimentação interna deve trocar entre MAIN e DEV.")
+
+        elif item_type == "pick":
+            pick_ids = pick_domain_ids(data, from_team_id)
+            if str(asset_id) not in pick_ids:
+                errors.append(f"Item {i}: pick fora do domínio do time origem.")
+
+            if same_team:
+                errors.append(f"Item {i}: pick não pode ser movimentada dentro do mesmo time.")
+
+        else:
+            errors.append(f"Item {i}: tipo de asset inválido.")
 
     return errors
 
@@ -152,33 +173,46 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     dev_df = load_sheet_df(wb, "development")
     picks_df = load_sheet_df(wb, "picks")
 
-    from_team_id = int(tx_row["from_team_id"])
-    to_team_id = int(tx_row["to_team_id"])
+    from_team_raw = tx_row.get("from_team_id", tx_row.get("fromteamid"))
+    to_team_raw = tx_row.get("to_team_id", tx_row.get("toteamid"))
+
+    from_team_id = int(from_team_raw)
+    to_team_id = int(to_team_raw)
 
     def num(series):
         return pd.to_numeric(series, errors="coerce")
 
     for item in item_rows:
-        if item["item_type"] == "player":
-            pid = int(item["asset_id"])
-            from_rt = str(item.get("from_roster_type", "")).strip().upper()
-            to_rt = str(item.get("to_roster_type", "")).strip().upper()
+        item_type = str(item.get("item_type", item.get("itemtype", ""))).strip().lower()
+        asset_id = item.get("asset_id", item.get("assetid"))
+        item_from_team = int(item.get("from_team_id", item.get("fromteamid", from_team_id)))
+        item_to_team = int(item.get("to_team_id", item.get("toteamid", to_team_id)))
+
+        if item_type == "player":
+            pid = int(asset_id)
+            from_rt = str(item.get("from_roster_type", item.get("fromrostertype", ""))).strip().upper()
+            to_rt = str(item.get("to_roster_type", item.get("torostertype", ""))).strip().upper()
+
+            if from_rt not in {"MAIN", "DEV"} or to_rt not in {"MAIN", "DEV"}:
+                continue
 
             source_df = roster_df if from_rt == "MAIN" else dev_df
             target_df = roster_df if to_rt == "MAIN" else dev_df
 
+            if source_df.empty or "team_id" not in source_df.columns or "player_id" not in source_df.columns:
+                continue
+
             source_team_ids = num(source_df["team_id"])
             source_player_ids = num(source_df["player_id"])
 
-            source_mask = source_team_ids.eq(from_team_id) & source_player_ids.eq(pid)
+            source_mask = source_team_ids.eq(item_from_team) & source_player_ids.eq(pid)
 
             if not source_mask.any():
                 continue
 
             moving_rows = source_df.loc[source_mask].copy()
             source_df = source_df.loc[~source_mask].copy()
-
-            moving_rows.loc[:, "team_id"] = to_team_id
+            moving_rows.loc[:, "team_id"] = item_to_team
 
             target_df = pd.concat([target_df, moving_rows], ignore_index=True)
 
@@ -192,14 +226,14 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
             else:
                 dev_df = target_df
 
-        elif item["item_type"] == "pick" and not picks_df.empty:
+        elif item_type == "pick" and not picks_df.empty:
             id_col = picks_df.columns[0]
             owner_cols = [c for c in picks_df.columns if "owner" in c.lower() or "team" in c.lower()]
             if owner_cols:
                 owner_col = owner_cols[0]
                 owner_ids = pd.to_numeric(picks_df[owner_col], errors="coerce")
-                mask = picks_df[id_col].astype(str).eq(str(item["asset_id"])) & owner_ids.eq(from_team_id)
-                picks_df.loc[mask, owner_col] = to_team_id
+                mask = picks_df[id_col].astype(str).eq(str(asset_id)) & owner_ids.eq(item_from_team)
+                picks_df.loc[mask, owner_col] = item_to_team
 
     save_sheet_df(wb, "roster", roster_df)
     save_sheet_df(wb, "development", dev_df)
