@@ -14,6 +14,11 @@ def is_production_v5():
     return str(app_cfg.get("environment", "development")).lower() == "production"
 
 
+def ensure_import_schema_v5():
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE players ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1"))
+
+
 def import_caps_v5(xlsx_path):
     df = pd.read_excel(xlsx_path, sheet_name="Cap")
     df.columns = [str(c).strip() for c in df.columns]
@@ -66,6 +71,8 @@ def import_players_v5(xlsx_path):
 
     inserted = 0
     updated = 0
+    deactivated = 0
+    imported_keys = set()
 
     with engine.begin() as conn:
         for sheet in POSITION_SHEETS:
@@ -82,6 +89,8 @@ def import_players_v5(xlsx_path):
                 player_name = str(row.get("JOGADOR", "")).strip()
                 if not player_name or player_name.lower() == "nan":
                     continue
+
+                imported_keys.add((player_name.lower(), sheet))
 
                 owner_name = str(row.get("DONO", "")).strip()
                 owner_team_id = None
@@ -108,7 +117,8 @@ def import_players_v5(xlsx_path):
                 if existing_player_id:
                     conn.execute(text("""
                         UPDATE players
-                        SET owner_team_id = :owner_team_id
+                        SET owner_team_id = :owner_team_id,
+                            is_active = 1
                         WHERE player_id = :player_id
                     """), {
                         "owner_team_id": owner_team_id,
@@ -121,13 +131,15 @@ def import_players_v5(xlsx_path):
                             player_name,
                             position,
                             owner_team_id,
-                            status
+                            status,
+                            is_active
                         )
                         VALUES (
                             :player_name,
                             :position,
                             :owner_team_id,
-                            'OPEN'
+                            'OPEN',
+                            1
                         )
                     """), {
                         "player_name": player_name,
@@ -135,6 +147,23 @@ def import_players_v5(xlsx_path):
                         "owner_team_id": owner_team_id
                     })
                     inserted += 1
+
+        db_players = conn.execute(text("""
+            SELECT player_id, player_name, position
+            FROM players
+        """)).mappings().all()
+
+        for p in db_players:
+            key = (str(p["player_name"]).strip().lower(), p["position"])
+            if key not in imported_keys:
+                conn.execute(text("""
+                    UPDATE players
+                    SET is_active = 0
+                    WHERE player_id = :player_id
+                """), {
+                    "player_id": p["player_id"]
+                })
+                deactivated += 1
 
         conn.execute(text("""
             INSERT INTO player_state (player_id, status, is_renewal)
@@ -145,7 +174,7 @@ def import_players_v5(xlsx_path):
             WHERE ps.player_id IS NULL
         """))
 
-    return {"inserted": inserted, "updated": updated}
+    return {"inserted": inserted, "updated": updated, "deactivated": deactivated}
 
 
 def seed_default_admin_v5():
@@ -215,6 +244,7 @@ def seed_example_team_users_v5():
 
 def run_import_v5(xlsx_path):
     init_db_v5()
+    ensure_import_schema_v5()
 
     cap_result = import_caps_v5(xlsx_path)
     player_result = import_players_v5(xlsx_path)
