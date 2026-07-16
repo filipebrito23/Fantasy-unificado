@@ -9,15 +9,20 @@ TX_ITEMS_SHEET = "transactionitems"
 
 def roster_domain_ids(data, team_id: int) -> set:
     ids = set()
+
     for sheet in ["roster", "development"]:
         df = data.get(sheet, pd.DataFrame())
-        if not df.empty and {"team_id", "player_id"}.issubset(df.columns):
-            ids |= set(
-                df.loc[df["team_id"].astype(int) == team_id, "player_id"]
-                .dropna()
-                .astype(int)
-                .tolist()
-            )
+
+        if df.empty or not {"team_id", "player_id"}.issubset(df.columns):
+            continue
+
+        team_ids = pd.to_numeric(df["team_id"], errors="coerce")
+        player_ids = pd.to_numeric(df["player_id"], errors="coerce")
+
+        valid_mask = team_ids.notna() & player_ids.notna() & team_ids.eq(team_id)
+
+        ids |= set(player_ids.loc[valid_mask].astype(int).tolist())
+
     return ids
 
 
@@ -33,8 +38,12 @@ def pick_domain_ids(data, team_id: int) -> set:
     owner_col = owner_cols[0]
     id_col = picks.columns[0]
 
+    owner_ids = pd.to_numeric(picks[owner_col], errors="coerce")
+    valid_mask = owner_ids.notna() & owner_ids.eq(team_id)
+
     return set(
-        picks.loc[picks[owner_col].astype(int) == team_id, id_col]
+        picks.loc[valid_mask, id_col]
+        .dropna()
         .astype(str)
         .tolist()
     )
