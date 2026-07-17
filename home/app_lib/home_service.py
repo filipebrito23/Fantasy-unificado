@@ -105,25 +105,27 @@ def get_calendar_events():
 
 def get_draft_board():
     with engine.begin() as conn:
-        result = conn.execute(
-            text(
-                """
-                SELECT
-                    draft_id,
-                    season,
-                    round,
-                    pick_number,
-                    original_team_id,
-                    current_team_id,
-                    selected_player,
-                    selected_player_id,
-                    status,
-                    notes
-                FROM draft_board
-                ORDER BY season, round, pick_number
-                """
-            )
-        )
+        result = conn.execute(text("""
+        SELECT
+            d.draft_id,
+            d.season,
+            d.round,
+            d.pick_number,
+            d.original_team_id,
+            ot.team_name AS original_team_name,
+            d.current_team_id,
+            ct.team_name AS current_team_name,
+            d.selected_player,
+            d.selected_player_id,
+            d.status,
+            d.notes
+        FROM draft_board d
+        LEFT JOIN teams ot
+            ON d.original_team_id = ot.team_id
+        LEFT JOIN teams ct
+            ON d.current_team_id = ct.team_id
+        ORDER BY d.season, d.round, d.pick_number
+        """))
         return _df(result)
 
 

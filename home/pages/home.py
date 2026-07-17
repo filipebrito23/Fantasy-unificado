@@ -159,11 +159,30 @@ for idx, tab in enumerate(tab_containers):
 
         elif tab_key == "draft":
             draft_df = get_draft_board()
-
             if draft_df.empty:
                 st.info("Nenhuma pick cadastrada.")
             else:
-                st.dataframe(draft_df, use_container_width=True, hide_index=True)
+                show_df = draft_df[[
+                    "season",
+                    "round",
+                    "pick_number",
+                    "original_team_name",
+                    "current_team_name",
+                    "selected_player",
+                    "status",
+                    "notes",
+                ]].rename(columns={
+                    "season": "Temporada",
+                    "round": "Round",
+                    "pick_number": "Pick",
+                    "original_team_name": "Time original",
+                    "current_team_name": "Time atual",
+                    "selected_player": "Jogador selecionado",
+                    "status": "Status",
+                    "notes": "Observações",
+                })
+
+                st.dataframe(show_df, use_container_width=True, hide_index=True)
 
         elif tab_key == "jogos":
             render_links_section("jogos")
