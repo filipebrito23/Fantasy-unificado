@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-from app_lib.auth_v5 import authenticate_user_v5
+
 from app_lib.home_service import (
     ensure_default_home_tabs,
     get_home_tabs,
@@ -48,9 +48,14 @@ def render_comments(tab_key: str, user_label: str):
             st.divider()
 
     comment_text = st.text_area("Novo comentário", key=f"comment_box_{tab_key}")
+
     if st.button("Publicar comentário", key=f"comment_btn_{tab_key}"):
         if comment_text.strip():
-            create_comment(tab_key=tab_key, author=user_label, comment_text=comment_text.strip())
+            create_comment(
+                tab_key=tab_key,
+                author=user_label,
+                comment_text=comment_text.strip(),
+            )
             st.success("Comentário publicado.")
             st.rerun()
         else:
@@ -72,7 +77,11 @@ def render_posts(tab_key: str, user, user_label: str):
     if is_admin_user(user):
         with st.expander("Criar post", expanded=False):
             title = st.text_input("Título", key=f"post_title_{tab_key}")
-            content_md = st.text_area("Conteúdo", key=f"post_content_{tab_key}", height=180)
+            content_md = st.text_area(
+                "Conteúdo",
+                key=f"post_content_{tab_key}",
+                height=180,
+            )
             is_pinned = st.checkbox("Fixar post", key=f"post_pinned_{tab_key}")
 
             if st.button("Publicar post", key=f"post_btn_{tab_key}"):
@@ -88,6 +97,19 @@ def render_posts(tab_key: str, user, user_label: str):
                     st.rerun()
                 else:
                     st.error("Título e conteúdo são obrigatórios.")
+
+
+def render_links_section(section_name: str):
+    links_df = get_links_by_section(section_name)
+
+    if links_df.empty:
+        st.info("Nenhum link cadastrado.")
+        return
+
+    for _, row in links_df.iterrows():
+        st.markdown(f"- [{row['label']}]({row['url']})")
+        if pd.notna(row.get("description")) and str(row.get("description")).strip():
+            st.caption(row["description"])
 
 
 user = require_login_v5()
@@ -116,16 +138,20 @@ for idx, tab in enumerate(tab_containers):
 
         if tab_key == "regras":
             rule_df = get_active_rule()
+
             if rule_df.empty:
                 st.info("Nenhuma regra cadastrada.")
             else:
                 row = rule_df.iloc[0]
                 st.markdown(f"### {row['title']}")
-                st.caption(f"Versão: {row.get('version', '-')}, atualizado em {row.get('updated_at', '-')}")
+                st.caption(
+                    f"Versão: {row.get('version', '-')}, atualizado em {row.get('updated_at', '-')}"
+                )
                 st.markdown(row["content_md"])
 
         elif tab_key == "calendario":
             cal_df = get_calendar_events()
+
             if cal_df.empty:
                 st.info("Nenhum evento cadastrado.")
             else:
@@ -133,30 +159,17 @@ for idx, tab in enumerate(tab_containers):
 
         elif tab_key == "draft":
             draft_df = get_draft_board()
+
             if draft_df.empty:
                 st.info("Nenhuma pick cadastrada.")
             else:
                 st.dataframe(draft_df, use_container_width=True, hide_index=True)
 
         elif tab_key == "jogos":
-            links_df = get_links_by_section("jogos")
-            if links_df.empty:
-                st.info("Nenhum link cadastrado.")
-            else:
-                for _, row in links_df.iterrows():
-                    st.markdown(f"- [{row['label']}]({row['url']})")
-                    if pd.notna(row.get("description")) and str(row.get("description")).strip():
-                        st.caption(row["description"])
+            render_links_section("jogos")
 
         elif tab_key == "links":
-            links_df = get_links_by_section("links")
-            if links_df.empty:
-                st.info("Nenhum link cadastrado.")
-            else:
-                for _, row in links_df.iterrows():
-                    st.markdown(f"- [{row['label']}]({row['url']})")
-                    if pd.notna(row.get("description")) and str(row.get("description")).strip():
-                        st.caption(row["description"])
+            render_links_section("links")
 
         else:
             st.caption(f"Mural da aba {tab_label}.")
