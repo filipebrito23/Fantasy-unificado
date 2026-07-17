@@ -1,8 +1,7 @@
 import pandas as pd
 import streamlit as st
-
-from auth_v5 import authenticate_user_v5
-from home_service import (
+from app_lib.auth_v5 import authenticate_user_v5
+from app_lib.home_service import (
     ensure_default_home_tabs,
     get_home_tabs,
     get_active_rule,
