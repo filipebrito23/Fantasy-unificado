@@ -15,7 +15,7 @@ def get_home_tabs():
                 """
                 SELECT tab_key, tab_label, is_active, sort_order, allow_posts, allow_comments
                 FROM home_tabs
-                WHERE is_active = 1 OR is_active = TRUE
+                WHERE is_active IS TRUE
                 ORDER BY sort_order, tab_label
                 """
             )
@@ -25,14 +25,14 @@ def get_home_tabs():
 
 def ensure_default_home_tabs():
     defaults = [
-        ("regras", "Regras", 1, 1, 1, 1),
-        ("calendario", "Calendário", 1, 2, 1, 1),
-        ("draft", "Draft", 1, 3, 1, 1),
-        ("trades", "Trades", 1, 4, 1, 1),
-        ("dev", "Dev", 1, 5, 1, 1),
-        ("dispensas", "Dispensas", 1, 6, 1, 1),
-        ("jogos", "Jogos", 1, 7, 1, 1),
-        ("links", "Links", 1, 8, 1, 1),
+        ("regras", "Regras", True, 1, True, True),
+        ("calendario", "Calendário", True, 2, True, True),
+        ("draft", "Draft", True, 3, True, True),
+        ("trades", "Trades", True, 4, True, True),
+        ("dev", "Dev", True, 5, True, True),
+        ("dispensas", "Dispensas", True, 6, True, True),
+        ("jogos", "Jogos", True, 7, True, True),
+        ("links", "Links", True, 8, True, True),
     ]
 
     with engine.begin() as conn:
@@ -80,7 +80,7 @@ def get_active_rule():
                 """
                 SELECT rule_id, title, content_md, version, updated_at, updated_by, is_active
                 FROM rules_documents
-                WHERE is_active = 1 OR is_active = TRUE
+                WHERE is_active IS TRUE
                 ORDER BY updated_at DESC
                 LIMIT 1
                 """
@@ -135,7 +135,7 @@ def get_links_by_section(section: str):
                 SELECT link_id, section, label, url, description, is_active, sort_order
                 FROM link_items
                 WHERE lower(section) = lower(:section)
-                  AND (is_active = 1 OR is_active = TRUE)
+                  AND is_active IS TRUE
                 ORDER BY sort_order, label
                 """
             ),
