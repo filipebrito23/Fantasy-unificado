@@ -146,21 +146,123 @@ def append_transaction(file_path: str, tx_row: dict, item_rows: list[dict]):
     tx_df = ensure_unique_columns(load_sheet_df(wb, TX_SHEET))
     items_df = ensure_unique_columns(load_sheet_df(wb, TX_ITEMS_SHEET))
 
-    if tx_df.empty and TX_SHEET not in wb.sheetnames:
+    if tx_df.empty:
         tx_df = pd.DataFrame(columns=list(tx_row.keys()))
 
-    if items_df.empty and TX_ITEMS_SHEET not in wb.sheetnames and item_rows:
+    if items_df.empty and item_rows:
         items_df = pd.DataFrame(columns=list(item_rows[0].keys()))
 
-    new_tx_df = ensure_unique_columns(pd.DataFrame([tx_row]))
+    tx_df = ensure_unique_columns(tx_df)
+    items_df = ensure_unique_columns(items_df)
+
+    tx_id_col = next((c for c in tx_df.columns if str(c).strip().lower() == "transaction_id"), None)
+    item_tx_id_col = next((c for c in items_df.columns if str(c).strip().lower() == "transaction_id"), None)
+
+    if tx_id_col is None:
+        tx_id_col = "transaction_id"
+        if tx_id_col not in tx_df.columns:
+            tx_df[tx_id_col] = pd.Series(dtype="Int64")
+
+    if item_tx_id_col is None:
+        item_tx_id_col = "transaction_id"
+        if item_tx_id_col not in items_df.columns:
+            items_df[item_tx_id_col] = pd.Series(dtype="Int64")
+
+    existing_ids = pd.to_numeric(tx_df[tx_id_col], errors="coerce").dropna()
+    next_tx_id = int(existing_ids.max()) + 1 if not existing_ids.empty else 1
+
+    base_tx = dict(tx_row)
+    base_tx[tx_id_col] = next_tx_id
+
+    new_tx_rows = [base_tx]
+    new_item_rows = []
+
+    for item in item_rows or []:
+        row = dict(item)
+        row[item_tx_id_col] = next_tx_id
+        new_item_rows.append(row)
+
+    from_team_id = tx_row.get("from_team_id", tx_row.get("fromteamid"))
+    to_team_id = tx_row.get("to_team_id", tx_row.get("toteamid"))
+    tx_type = str(tx_row.get("transaction_type", tx_row.get("transactiontype", ""))).strip().upper()
+
+    try:
+        from_team_id = int(from_team_id) if from_team_id is not None else None
+    except Exception:
+        from_team_id = None
+
+    try:
+        to_team_id = int(to_team_id) if to_team_id is not None else None
+    except Exception:
+        to_team_id = None
+
+    is_bilateral_trade = (
+        tx_type == "TRADE"
+        and from_team_id is not None
+        and to_team_id is not None
+        and from_team_id != to_team_id
+    )
+
+    if is_bilateral_trade:
+        mirror_tx_id = next_tx_id + 1
+
+        mirror_tx = dict(base_tx)
+        if "from_team_id" in mirror_tx:
+            mirror_tx["from_team_id"] = to_team_id
+        if "fromteamid" in mirror_tx:
+            mirror_tx["fromteamid"] = to_team_id
+        if "to_team_id" in mirror_tx:
+            mirror_tx["to_team_id"] = from_team_id
+        if "toteamid" in mirror_tx:
+            mirror_tx["toteamid"] = from_team_id
+        mirror_tx[tx_id_col] = mirror_tx_id
+
+        if "notes" in mirror_tx and mirror_tx["notes"]:
+            mirror_tx["notes"] = f"{mirror_tx['notes']} [espelho]"
+        elif "notes" in mirror_tx:
+            mirror_tx["notes"] = "[espelho]"
+
+        new_tx_rows.append(mirror_tx)
+
+        for item in item_rows or []:
+            mirror_item = dict(item)
+
+            if "from_team_id" in mirror_item or "to_team_id" in mirror_item:
+                old_from = mirror_item.get("from_team_id")
+                old_to = mirror_item.get("to_team_id")
+                mirror_item["from_team_id"] = old_to
+                mirror_item["to_team_id"] = old_from
+
+            if "fromteamid" in mirror_item or "toteamid" in mirror_item:
+                old_from = mirror_item.get("fromteamid")
+                old_to = mirror_item.get("toteamid")
+                mirror_item["fromteamid"] = old_to
+                mirror_item["toteamid"] = old_from
+
+            if "from_roster_type" in mirror_item or "to_roster_type" in mirror_item:
+                old_from_rt = mirror_item.get("from_roster_type")
+                old_to_rt = mirror_item.get("to_roster_type")
+                mirror_item["from_roster_type"] = old_to_rt
+                mirror_item["to_roster_type"] = old_from_rt
+
+            if "fromrostertype" in mirror_item or "torostertype" in mirror_item:
+                old_from_rt = mirror_item.get("fromrostertype")
+                old_to_rt = mirror_item.get("torostertype")
+                mirror_item["fromrostertype"] = old_to_rt
+                mirror_item["torostertype"] = old_from_rt
+
+            mirror_item[item_tx_id_col] = mirror_tx_id
+            new_item_rows.append(mirror_item)
+
+    new_tx_df = ensure_unique_columns(pd.DataFrame(new_tx_rows))
     tx_df = pd.concat([tx_df, new_tx_df], ignore_index=True)
 
-    if item_rows:
-        new_items_df = ensure_unique_columns(pd.DataFrame(item_rows))
+    if new_item_rows:
+        new_items_df = ensure_unique_columns(pd.DataFrame(new_item_rows))
         items_df = pd.concat([items_df, new_items_df], ignore_index=True)
 
     save_sheet_df(wb, TX_SHEET, tx_df)
-    if item_rows:
+    if not items_df.empty:
         save_sheet_df(wb, TX_ITEMS_SHEET, items_df)
 
     wb.save(file_path)
