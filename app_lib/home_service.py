@@ -33,44 +33,27 @@ def ensure_default_home_tabs():
         ("dispensas", "Dispensas", True, 6, True, True),
         ("jogos", "Jogos", True, 7, True, True),
         ("links", "Links", True, 8, True, True),
+        ("arquivo", "Arquivo", True, 9, True, True),
     ]
 
     with engine.begin() as conn:
         for row in defaults:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO home_tabs (
-                        tab_key,
-                        tab_label,
-                        is_active,
-                        sort_order,
-                        allow_posts,
-                        allow_comments
-                    )
-                    SELECT
-                        :tab_key,
-                        :tab_label,
-                        :is_active,
-                        :sort_order,
-                        :allow_posts,
-                        :allow_comments
-                    WHERE NOT EXISTS (
-                        SELECT 1
-                        FROM home_tabs
-                        WHERE tab_key = :tab_key
-                    )
-                    """
-                ),
-                {
-                    "tab_key": row[0],
-                    "tab_label": row[1],
-                    "is_active": row[2],
-                    "sort_order": row[3],
-                    "allow_posts": row[4],
-                    "allow_comments": row[5],
-                },
-            )
+            conn.execute(text("""
+                INSERT INTO home_tabs (
+                    tab_key, tab_label, is_active, sort_order, allow_posts, allow_comments
+                )
+                SELECT :tab_key, :tab_label, :is_active, :sort_order, :allow_posts, :allow_comments
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM home_tabs WHERE tab_key = :tab_key
+                )
+            """), {
+                "tab_key": row[0],
+                "tab_label": row[1],
+                "is_active": row[2],
+                "sort_order": row[3],
+                "allow_posts": row[4],
+                "allow_comments": row[5],
+            })
 
 
 def get_active_rule():
