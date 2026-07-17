@@ -29,7 +29,7 @@ def ensure_default_home_tabs():
         ("calendario", "Calendário", True, 2, True, True),
         ("draft", "Draft", True, 3, True, True),
         ("trades", "Trades", True, 4, True, True),
-        ("dev", "Dev", True, 5, True, True),
+        ("dleague", "Dleague", True, 5, True, True),
         ("dispensas", "Dispensas", True, 6, True, True),
         ("jogos", "Jogos", True, 7, True, True),
         ("links", "Links", True, 8, True, True),
