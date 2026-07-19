@@ -80,8 +80,9 @@ def validate_items(data, from_team_id: int, item_rows: list[dict]) -> list[str]:
     return errors
 
 
-def validate_items_bilateral(data, item_rows: list[dict]) -> list[str]:
+def validate_items_bilateral(data, item_rows: list[dict], transaction_type: str | None = None) -> list[str]:
     errors = []
+    tx_type = str(transaction_type or "").strip().upper()
 
     for i, item in enumerate(item_rows, start=1):
         item_type = str(item.get("item_type", item.get("itemtype", ""))).strip().lower()
@@ -91,22 +92,43 @@ def validate_items_bilateral(data, item_rows: list[dict]) -> list[str]:
         from_roster_type = str(item.get("from_roster_type", item.get("fromrostertype", ""))).strip().upper()
         to_roster_type = str(item.get("to_roster_type", item.get("torostertype", ""))).strip().upper()
 
-        if from_team_id is None:
-            errors.append(f"Item {i}: sem time de origem.")
-            continue
-
         try:
-            from_team_id = int(from_team_id)
+            from_team_id = int(from_team_id) if from_team_id is not None and str(from_team_id).strip() != "" else None
         except Exception:
             errors.append(f"Item {i}: time de origem inválido.")
             continue
 
         try:
-            to_team_id = int(to_team_id) if to_team_id is not None else None
+            to_team_id = int(to_team_id) if to_team_id is not None and str(to_team_id).strip() != "" else None
         except Exception:
-            to_team_id = None
+            errors.append(f"Item {i}: time de destino inválido.")
+            continue
 
-        same_team = to_team_id is not None and from_team_id == to_team_id
+        if tx_type == "TRADE":
+            if from_team_id is None or to_team_id is None:
+                errors.append(f"Item {i}: trade exige time de origem e destino.")
+                continue
+
+        elif tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
+            if from_team_id is None:
+                errors.append(f"Item {i}: dispensa exige time de origem.")
+                continue
+
+        elif tx_type in {"ADD", "SIGN", "ASSINATURA"}:
+            if to_team_id is None:
+                errors.append(f"Item {i}: adição exige time de destino.")
+                continue
+
+        elif tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"}:
+            if from_team_id is None or to_team_id is None:
+                errors.append(f"Item {i}: movimentação interna exige origem e destino.")
+                continue
+
+        same_team = (
+            from_team_id is not None and
+            to_team_id is not None and
+            from_team_id == to_team_id
+        )
 
         if item_type == "player":
             try:
@@ -115,24 +137,32 @@ def validate_items_bilateral(data, item_rows: list[dict]) -> list[str]:
                 errors.append(f"Item {i}: jogador inválido.")
                 continue
 
-            player_ids = roster_domain_ids(data, from_team_id, from_roster_type)
-            if asset_id_int not in player_ids:
-                errors.append(f"Item {i}: jogador fora do domínio do time origem.")
-                continue
+            if from_team_id is not None:
+                player_ids = roster_domain_ids(data, from_team_id, from_roster_type)
+                if asset_id_int not in player_ids:
+                    errors.append(f"Item {i}: jogador fora do domínio do time origem.")
+                    continue
 
-            if same_team:
+            if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"} or same_team:
                 if from_roster_type not in {"MAIN", "DEV"} or to_roster_type not in {"MAIN", "DEV"}:
                     errors.append(f"Item {i}: movimentação interna exige MAIN/DEV válidos.")
                 elif from_roster_type == to_roster_type:
                     errors.append(f"Item {i}: movimentação interna deve trocar entre MAIN e DEV.")
 
         elif item_type == "pick":
+            if from_team_id is None:
+                errors.append(f"Item {i}: pick exige time de origem.")
+                continue
+
             pick_ids = pick_domain_ids(data, from_team_id)
             if str(asset_id) not in pick_ids:
                 errors.append(f"Item {i}: pick fora do domínio do time origem.")
 
-            if same_team:
+            if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"} or same_team:
                 errors.append(f"Item {i}: pick não pode ser movimentada dentro do mesmo time.")
+
+            if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
+                errors.append(f"Item {i}: dispensa não se aplica a pick.")
 
         else:
             errors.append(f"Item {i}: tipo de asset inválido.")
@@ -187,12 +217,12 @@ def append_transaction(file_path: str, tx_row: dict, item_rows: list[dict]):
     tx_type = str(tx_row.get("transaction_type", tx_row.get("transactiontype", ""))).strip().upper()
 
     try:
-        from_team_id = int(from_team_id) if from_team_id is not None else None
+        from_team_id = int(from_team_id) if from_team_id is not None and str(from_team_id).strip() != "" else None
     except Exception:
         from_team_id = None
 
     try:
-        to_team_id = int(to_team_id) if to_team_id is not None else None
+        to_team_id = int(to_team_id) if to_team_id is not None and str(to_team_id).strip() != "" else None
     except Exception:
         to_team_id = None
 
@@ -275,11 +305,15 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     dev_df = load_sheet_df(wb, "development")
     picks_df = load_sheet_df(wb, "picks")
 
+    tx_type = str(
+        tx_row.get("transaction_type", tx_row.get("transactiontype", ""))
+    ).strip().upper()
+
     from_team_raw = tx_row.get("from_team_id", tx_row.get("fromteamid"))
     to_team_raw = tx_row.get("to_team_id", tx_row.get("toteamid"))
 
-    from_team_id = int(from_team_raw)
-    to_team_id = int(to_team_raw)
+    from_team_id = int(from_team_raw) if from_team_raw is not None and str(from_team_raw).strip() != "" else None
+    to_team_id = int(to_team_raw) if to_team_raw is not None and str(to_team_raw).strip() != "" else None
 
     def num(series):
         return pd.to_numeric(series, errors="coerce")
@@ -287,13 +321,66 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     for item in item_rows:
         item_type = str(item.get("item_type", item.get("itemtype", ""))).strip().lower()
         asset_id = item.get("asset_id", item.get("assetid"))
-        item_from_team = int(item.get("from_team_id", item.get("fromteamid", from_team_id)))
-        item_to_team = int(item.get("to_team_id", item.get("toteamid", to_team_id)))
+
+        item_from_team_raw = item.get("from_team_id", item.get("fromteamid", from_team_id))
+        item_to_team_raw = item.get("to_team_id", item.get("toteamid", to_team_id))
+
+        item_from_team = int(item_from_team_raw) if item_from_team_raw is not None and str(item_from_team_raw).strip() != "" else None
+        item_to_team = int(item_to_team_raw) if item_to_team_raw is not None and str(item_to_team_raw).strip() != "" else None
 
         if item_type == "player":
             pid = int(asset_id)
             from_rt = str(item.get("from_roster_type", item.get("fromrostertype", ""))).strip().upper()
             to_rt = str(item.get("to_roster_type", item.get("torostertype", ""))).strip().upper()
+
+            if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
+                if from_team_id is None:
+                    continue
+
+                if from_rt == "MAIN" and not roster_df.empty:
+                    mask = num(roster_df["team_id"]).eq(from_team_id) & num(roster_df["player_id"]).eq(pid)
+                    roster_df = roster_df.loc[~mask].copy()
+
+                elif from_rt == "DEV" and not dev_df.empty:
+                    mask = num(dev_df["team_id"]).eq(from_team_id) & num(dev_df["player_id"]).eq(pid)
+                    dev_df = dev_df.loc[~mask].copy()
+
+                continue
+
+            if tx_type in {"ADD", "SIGN", "ASSINATURA"}:
+                if item_to_team is None:
+                    continue
+
+                target_df = roster_df if to_rt == "MAIN" else dev_df
+                source_df = roster_df if from_rt == "MAIN" else dev_df
+
+                moved = False
+                if item_from_team is not None and from_rt in {"MAIN", "DEV"}:
+                    if not source_df.empty and "team_id" in source_df.columns and "player_id" in source_df.columns:
+                        mask = num(source_df["team_id"]).eq(item_from_team) & num(source_df["player_id"]).eq(pid)
+                        if mask.any():
+                            moving_rows = source_df.loc[mask].copy()
+                            source_df = source_df.loc[~mask].copy()
+                            moving_rows.loc[:, "team_id"] = item_to_team
+                            target_df = pd.concat([target_df, moving_rows], ignore_index=True)
+                            moved = True
+
+                            if from_rt == "MAIN":
+                                roster_df = source_df
+                            else:
+                                dev_df = source_df
+
+                            if to_rt == "MAIN":
+                                roster_df = target_df
+                            else:
+                                dev_df = target_df
+
+                if not moved:
+                    # aqui só adiciona se você tiver uma linha-base em algum lugar;
+                    # se não tiver, o SIGN pode ficar apenas em transactions por enquanto
+                    pass
+
+                continue
 
             if from_rt not in {"MAIN", "DEV"} or to_rt not in {"MAIN", "DEV"}:
                 continue
@@ -307,6 +394,9 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
             source_team_ids = num(source_df["team_id"])
             source_player_ids = num(source_df["player_id"])
 
+            if item_from_team is None:
+                continue
+
             source_mask = source_team_ids.eq(item_from_team) & source_player_ids.eq(pid)
 
             if not source_mask.any():
@@ -314,8 +404,11 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
 
             moving_rows = source_df.loc[source_mask].copy()
             source_df = source_df.loc[~source_mask].copy()
-            moving_rows.loc[:, "team_id"] = item_to_team
 
+            if item_to_team is None:
+                continue
+
+            moving_rows.loc[:, "team_id"] = item_to_team
             target_df = pd.concat([target_df, moving_rows], ignore_index=True)
 
             if from_rt == "MAIN":
@@ -331,11 +424,20 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
         elif item_type == "pick" and not picks_df.empty:
             id_col = picks_df.columns[0]
             owner_cols = [c for c in picks_df.columns if "owner" in c.lower() or "team" in c.lower()]
-            if owner_cols:
-                owner_col = owner_cols[0]
-                owner_ids = pd.to_numeric(picks_df[owner_col], errors="coerce")
-                mask = picks_df[id_col].astype(str).eq(str(asset_id)) & owner_ids.eq(item_from_team)
-                picks_df.loc[mask, owner_col] = item_to_team
+            if not owner_cols:
+                continue
+
+            owner_col = owner_cols[0]
+            owner_ids = pd.to_numeric(picks_df[owner_col], errors="coerce")
+
+            if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
+                continue
+
+            if item_from_team is None or item_to_team is None:
+                continue
+
+            mask = picks_df[id_col].astype(str).eq(str(asset_id)) & owner_ids.eq(item_from_team)
+            picks_df.loc[mask, owner_col] = item_to_team
 
     save_sheet_df(wb, "roster", roster_df)
     save_sheet_df(wb, "development", dev_df)
@@ -350,6 +452,7 @@ def compact_columns(df: pd.DataFrame) -> pd.DataFrame:
         str(c).strip().lower().replace("_", "").replace(" ", "")
         for c in out.columns
     ]
+    out = out.loc[:, ~out.columns.duplicated()].copy()
     return out
 
 
@@ -368,6 +471,10 @@ def build_transactions_history(
     items = items_df.copy() if items_df is not None else pd.DataFrame()
     if not items.empty:
         items = compact_columns(items)
+
+    tx = tx.loc[:, ~tx.columns.duplicated()].copy()
+    if not items.empty:
+        items = items.loc[:, ~items.columns.duplicated()].copy()
 
     if not {"fromteamid", "toteamid"}.issubset(tx.columns):
         return pd.DataFrame()
@@ -416,9 +523,8 @@ def build_transactions_history(
         if not items.empty:
             items["item_desc"] = items.apply(describe_item, axis=1)
             items_grouped = (
-                items.groupby("transactionid")["item_desc"]
+                items.groupby("transactionid", as_index=False)["item_desc"]
                 .apply(lambda s: " | ".join(s.astype(str)))
-                .reset_index()
             )
             tx = tx.merge(items_grouped, on="transactionid", how="left")
             tx = tx.rename(columns={"item_desc": "items_summary"})
@@ -431,6 +537,8 @@ def build_transactions_history(
         "transactiondate": "transaction_date",
         "initiatedby": "initiated_by",
     })
+
+    tx = tx.loc[:, ~tx.columns.duplicated()].copy()
 
     preferred_cols = [
         "transaction_id",
