@@ -232,6 +232,50 @@ with tab_main:
 
     display_main = build_red_flags(main_roster, visible_seasons)
 
+    position_order = {
+        "PG": 1,
+        "PG/SG": 2,
+        "SG": 3,
+        "SG/SF": 4,
+        "SF": 5,
+        "SF/PF": 6,
+        "PF": 7,
+        "PF/C": 8,
+        "C": 9,
+    }
+
+    if not display_main.empty:
+        pos_col = None
+        for candidate in ["Posição", "Posicao", "position", "posição", "posicao"]:
+            if candidate in display_main.columns:
+                pos_col = candidate
+                break
+
+        if pos_col is not None:
+            display_main = display_main.copy()
+            display_main["_pos_sort"] = (
+                display_main[pos_col]
+                .astype(str)
+                .str.strip()
+                .map(position_order)
+                .fillna(999)
+            )
+
+            sort_cols = ["_pos_sort"]
+            if "Jogador" in display_main.columns:
+                sort_cols.append("Jogador")
+
+            display_main = display_main.sort_values(
+                by=sort_cols,
+                ascending=True,
+                na_position="last",
+            ).copy()
+
+            if "Ordem" in display_main.columns:
+                display_main["Ordem"] = range(1, len(display_main) + 1)
+
+            display_main = display_main.drop(columns=["_pos_sort"], errors="ignore")
+
     st.dataframe(
         display_main,
         use_container_width=True,
