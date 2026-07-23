@@ -1,13 +1,8 @@
-# permissions.py
-
 from functools import wraps
 import streamlit as st
 
-
-def is_admin_user(user: dict | None) -> bool:
-    if not user:
-        return False
-    return str(user.get("role", "")).strip().lower() == "admin"
+from app_lib.role_helpers import is_admin_user
+from app_lib.session_helpers import get_current_user_v5
 
 
 def require_admin(user: dict | None):
@@ -20,7 +15,7 @@ def admin_only_message():
 
 
 def require_admin_page():
-    user = st.session_state.get("user_v5")
+    user = get_current_user_v5()
     if not is_admin_user(user):
         st.warning("Somente administradores podem acessar esta página.")
         st.stop()

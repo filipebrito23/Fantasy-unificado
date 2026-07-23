@@ -77,7 +77,7 @@ def get_calendar_events():
         result = conn.execute(
             text(
                 """
-                SELECT event_id, title, category, start_date, end_date, season, status, notes
+                SELECT  title, start_date, end_date, season, status, notes
                 FROM calendar_events
                 ORDER BY start_date, end_date, title
                 """
