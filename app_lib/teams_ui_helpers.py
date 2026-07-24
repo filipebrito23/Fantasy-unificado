@@ -92,7 +92,7 @@ def get_roster_column_order(df: pd.DataFrame, visible_seasons: list[str]) -> lis
 def get_roster_column_config(visible_seasons: list[str]) -> dict:
     config = {
         "Ordem": st.column_config.NumberColumn("Ordem", width="small", format="%d"),
-        "Jogador": st.column_config.TextColumn("Jogador", width="large"),
+        "Jogador": st.column_config.TextColumn("Jogador", width="small"),
         "Posição": st.column_config.TextColumn("Posição", width="small"),
     }
 
@@ -110,7 +110,7 @@ def get_picks_column_order(df: pd.DataFrame) -> list[str]:
 
 def get_picks_column_config() -> dict:
     return {
-        "Pick": st.column_config.TextColumn("Pick", width="medium"),
+        "Pick": st.column_config.TextColumn("Pick", width="small"),
         "Ano": st.column_config.NumberColumn("Ano", width="small", format="%d"),
         "Round": st.column_config.NumberColumn("Round", width="small", format="%d"),
         "Time original": st.column_config.TextColumn("Time original", width="medium"),
