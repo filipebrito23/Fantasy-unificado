@@ -134,7 +134,7 @@ def build_standings(games_df: pd.DataFrame, teams_df: pd.DataFrame) -> pd.DataFr
     standings["Aproveitamento"] = pct.map(lambda x: f"{x:.1f}%")
     standings = apply_head_to_head_tiebreak(standings, games_df).reset_index(drop=True)
     standings["Posição"] = standings.index + 1
-    return standings[["Posição", "Time", "Jogos", "Vitórias", "Derrotas", "Empates", "Saldo", "Pontos a favor", "Pontos contra", "Aproveitamento"]]
+    return standings[["Posição", "Time", "Vitórias", "Derrotas",  "Pontos a favor", "Pontos contra", "Saldo", "Aproveitamento"]]
 
 
 def build_head_to_head_matrix(games_df: pd.DataFrame, teams_df: pd.DataFrame) -> pd.DataFrame:

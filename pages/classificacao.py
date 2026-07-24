@@ -72,10 +72,11 @@ def render_confronto_tab(matrix_df: pd.DataFrame):
 
 def render_calendario_tab(schedule_check_df: pd.DataFrame, games_df: pd.DataFrame):
     st.subheader("Calendário")
-    if schedule_check_df.empty:
-        st.info("Sem jogos para validar.")
-    else:
-        st.table(schedule_check_df)
+    with st.expander("Validação do calendário", expanded=False):
+            if schedule_check_df.empty:
+                st.info("Sem jogos para validar.")
+            else:
+                st.dataframe(schedule_check_df, use_container_width=True, hide_index=True)
     with st.expander("Jogos", expanded=False):
         cols = [c for c in games_df.columns if c not in {"id_jogo", "id_time_1", "id_time_2"}]
         st.table(games_df[cols] if cols else games_df)
