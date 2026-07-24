@@ -1,0 +1,23 @@
+extrair helpers de formatação;
+
+extrair consultas e comandos para um service;
+
+reorganizar a página em funções por aba;
+
+só então refinar UI e filtros.
+
+
+readme
+
+app_lib/auction_service.py: consultas e operações do leilão.
+
+
+app_lib/auction_formatters.py: formatação de moeda, texto e tempo.
+
+pages/lei.py ou pages/leilao.py: tela principal do Streamlit, chamando os services.
+
+
+app_lib/auth_v5.py: manter autenticação e gestão de usuários, porque isso já existe separado e faz sentido ficar fora da página.
+
+
+app_lib/auction_v5.py ou manter auction_v5.py como wrapper compatível: opcional, se você quiser preservar imports antigos.

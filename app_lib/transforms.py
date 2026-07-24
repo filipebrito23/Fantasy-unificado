@@ -163,12 +163,34 @@ def format_picks_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_team_fines_row(fines_df: pd.DataFrame, team_id: int) -> dict:
-    team_fines = fines_df.loc[fines_df["team_id"] == team_id]
+    if fines_df.empty or "team_id" not in fines_df.columns:
+        return {"team_id": team_id, **{c: 0.0 for c in FINE_COLS}, "notes": ""}
+
+    fines = fines_df.copy()
+    fines["team_id"] = pd.to_numeric(fines["team_id"], errors="coerce")
+    normalized_team_id = pd.to_numeric(pd.Series([team_id]), errors="coerce").iloc[0]
+
+    for col in FINE_COLS:
+        if col in fines.columns:
+            fines[col] = pd.to_numeric(fines[col], errors="coerce").fillna(0.0)
+
+    team_fines = fines.loc[fines["team_id"] == normalized_team_id].copy()
+
     if team_fines.empty:
         return {"team_id": team_id, **{c: 0.0 for c in FINE_COLS}, "notes": ""}
+
+    if len(team_fines) > 1:
+        merged_row = {"team_id": team_id, "notes": ""}
+        for col in FINE_COLS:
+            merged_row[col] = float(team_fines[col].sum()) if col in team_fines.columns else 0.0
+        if "notes" in team_fines.columns:
+            merged_row["notes"] = " | ".join(team_fines["notes"].dropna().astype(str).tolist())
+        return merged_row
+
     row = team_fines.iloc[0].to_dict()
     for col in FINE_COLS:
-        row[col] = 0.0 if pd.isna(row.get(col)) else float(row.get(col, 0.0))
+        row[col] = float(row.get(col, 0.0) or 0.0)
+    row["notes"] = str(row.get("notes", "") or "")
     return row
 
 
