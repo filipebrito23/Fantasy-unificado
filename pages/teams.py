@@ -16,14 +16,11 @@ from app_lib.teams_ui_helpers import (
 from app_lib.transactions_ui import render_transactions_tab
 from app_lib.transforms import SEASON_LABELS, get_team_options
 
-
 DEFAULT_FILE = Path("roster.xlsx")
-
 
 @st.cache_data
 def cached_load(file_path: str):
     return load_workbook_data(file_path)
-
 
 user = require_login_v5()
 is_admin = is_admin_user(user)
@@ -85,13 +82,13 @@ row_1 = st.columns(3)
 with row_1[0]:
     render_summary_card("Time", selected_team_name)
 with row_1[1]:
-    render_summary_card("MAIN players", len(main_roster))
+    render_summary_card("Principal", len(main_roster))
 with row_1[2]:
-    render_summary_card("DEV players", len(dev_roster))
+    render_summary_card("Desenvolvimento", len(dev_roster))
 
 row_2 = st.columns(3)
 with row_2[0]:
-    render_summary_card("Salários MAIN", currency(main_summary.get("Salários", 0.0)))
+    render_summary_card("Salários Principal", currency(main_summary.get("Salários", 0.0)))
 with row_2[1]:
     render_summary_card("Cap restante", currency(cap_remaining))
 with row_2[2]:
@@ -101,7 +98,7 @@ st.markdown(f"**Status do cap:** {cap_status}")
 st.divider()
 
 tab_main, tab_dev, tab_picks, tab_transactions = st.tabs(
-    ["Principal", "Development", "Picks", "Transactions"]
+    ["Principal", "Desenvolvimento", "Picks", "Transações"]
 )
 
 with tab_main:

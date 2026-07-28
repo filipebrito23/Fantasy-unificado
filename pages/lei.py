@@ -26,11 +26,9 @@ STATUS_FILTERS = ["Todos", "OPEN", "CLOSED"]
 
 st.set_page_config(page_title="Leilão NBA Fantasy v5", layout="wide")
 
-
 def get_environment_label_v5():
     app_cfg = st.secrets.get("app", {})
     return str(app_cfg.get("environment", "development")).lower()
-
 
 def startup_v5():
     try:
@@ -41,20 +39,16 @@ def startup_v5():
     except Exception as e:
         return False, str(e)
 
-
 def is_admin(user):
     return str(user.get("role", "")).lower() == "admin"
-
 
 def logout_v5():
     st.session_state.user_v5 = None
     st.rerun()
 
-
 def ensure_session():
     if "user_v5" not in st.session_state:
         st.session_state.user_v5 = None
-
 
 def filter_players(df: pd.DataFrame, status_filter: str) -> pd.DataFrame:
     if df.empty:
@@ -62,7 +56,6 @@ def filter_players(df: pd.DataFrame, status_filter: str) -> pd.DataFrame:
     if status_filter == "Todos":
         return df
     return df[df["status"].fillna("").astype(str).str.upper() == status_filter.upper()]
-
 
 def render_login():
     st.title("Leilão NBA Fantasy v5")
@@ -78,7 +71,6 @@ def render_login():
                 st.rerun()
             else:
                 st.error("E-mail ou senha inválidos.")
-
 
 def render_password_change(user):
     st.warning("Você precisa trocar sua senha antes de continuar.")
@@ -96,7 +88,6 @@ def render_password_change(user):
                 st.session_state.user_v5["must_change_password"] = 0
                 st.success("Senha alterada com sucesso.")
                 st.rerun()
-
 
 def render_players_tab(position, status_filter):
     st.subheader("Propostas")
@@ -126,7 +117,6 @@ def render_players_tab(position, status_filter):
         cols_h = ["bid_id", "team_name", "amount", "years", "created_at", "updated_at", "deleted_at", "delete_reason", "tipo", "ativa", "created_by"]
         st.dataframe(history[cols_h], use_container_width=True, hide_index=True)
 
-
 def render_bid_form_tab(user):
     st.subheader("Nova proposta")
     players = pd.DataFrame(get_players_with_state_v5("Todas"))
@@ -137,7 +127,7 @@ def render_bid_form_tab(user):
 
     with engine.begin() as conn:
         teams = conn.execute(text("SELECT team_id, team_name FROM teams ORDER BY team_name")).fetchall()
-    team_map = {name: tid for tid, name in teams}
+        team_map = {name: tid for tid, name in teams}
 
     player_id = st.selectbox(
         "Jogador",
@@ -183,7 +173,6 @@ def render_bid_form_tab(user):
         else:
             st.error(msg)
 
-
 def render_cap_tab():
     st.subheader("Cap")
     cap_df = pd.DataFrame(get_team_rows_v5())
@@ -195,7 +184,6 @@ def render_cap_tab():
     st.metric("Times", len(show))
     st.dataframe(show.sort_values("Disponível", ascending=False), use_container_width=True, hide_index=True)
 
-
 def render_admin_tab(user):
     if user["role"] != "admin":
         st.warning("Acesso restrito ao administrador.")
@@ -203,41 +191,40 @@ def render_admin_tab(user):
 
     st.subheader("Admin")
     tabs = st.tabs(["Propostas", "Usuários", "Auditoria"])
-
     with tabs[0]:
         bids_df = pd.DataFrame(get_all_bids_v5(300))
         if bids_df.empty:
             st.info("Nenhuma proposta cadastrada.")
         else:
             st.dataframe(bids_df, use_container_width=True, hide_index=True)
-            bid_options = bids_df["bid_id"].tolist()
-            selected_bid_id = st.selectbox(
-                "Selecionar proposta",
-                bid_options,
-                format_func=lambda bid_id: f"#{bid_id} - {bids_df.loc[bids_df['bid_id']==bid_id, 'player_name'].iloc[0]} / {bids_df.loc[bids_df['bid_id']==bid_id, 'team_name'].iloc[0]}",
-            )
-            selected_bid = bids_df.loc[bids_df["bid_id"] == selected_bid_id].iloc[0]
-            with st.form("admin_edit_bid_form"):
-                new_amount = st.number_input("Novo valor", value=float(selected_bid["amount"]), min_value=1000000.0, step=100000.0, format="%.2f")
-                new_years = st.number_input("Novos anos", value=int(selected_bid["years"]), min_value=1, max_value=4, step=1)
-                edit_submit = st.form_submit_button("Salvar edição")
-                if edit_submit:
-                    ok, msg = update_bid_v5(selected_bid_id, new_amount, new_years, user["email"], user["user_id"])
-                    if ok:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-            with st.form("admin_delete_bid_form"):
-                delete_reason = st.text_input("Motivo da exclusão")
-                delete_submit = st.form_submit_button("Excluir proposta")
-                if delete_submit:
-                    ok, msg = delete_bid_v5(selected_bid_id, user["email"], user["user_id"], delete_reason)
-                    if ok:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
+        bid_options = bids_df["bid_id"].tolist()
+        selected_bid_id = st.selectbox(
+            "Selecionar proposta",
+            bid_options,
+            format_func=lambda bid_id: f"#{bid_id} - {bids_df.loc[bids_df['bid_id']==bid_id, 'player_name'].iloc[0]} / {bids_df.loc[bids_df['bid_id']==bid_id, 'team_name'].iloc[0]}",
+        )
+        selected_bid = bids_df.loc[bids_df["bid_id"] == selected_bid_id].iloc[0]
+        with st.form("admin_edit_bid_form"):
+            new_amount = st.number_input("Novo valor", value=float(selected_bid["amount"]), min_value=1000000.0, step=100000.0, format="%.2f")
+            new_years = st.number_input("Novos anos", value=int(selected_bid["years"]), min_value=1, max_value=4, step=1)
+            edit_submit = st.form_submit_button("Salvar edição")
+            if edit_submit:
+                ok, msg = update_bid_v5(selected_bid_id, new_amount, new_years, user["email"], user["user_id"])
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        with st.form("admin_delete_bid_form"):
+            delete_reason = st.text_input("Motivo da exclusão")
+            delete_submit = st.form_submit_button("Excluir proposta")
+            if delete_submit:
+                ok, msg = delete_bid_v5(selected_bid_id, user["email"], user["user_id"], delete_reason)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
 
     with tabs[1]:
         users_df = pd.DataFrame(get_all_users_v5())
@@ -247,7 +234,7 @@ def render_admin_tab(user):
             st.dataframe(users_df, use_container_width=True, hide_index=True)
         with engine.begin() as conn:
             teams = conn.execute(text("SELECT team_id, team_name FROM teams ORDER BY team_name")).fetchall()
-        team_map = {name: tid for tid, name in teams}
+            team_map = {name: tid for tid, name in teams}
         with st.form("create_user_form_v5"):
             new_email = st.text_input("E-mail do usuário")
             new_password = st.text_input("Senha inicial", type="password")
@@ -273,7 +260,6 @@ def render_admin_tab(user):
         else:
             st.dataframe(audit_df, use_container_width=True, hide_index=True)
 
-
 def render_profile_tab(user):
     st.subheader("Perfil")
     with st.form("change_password_profile_v5"):
@@ -291,7 +277,6 @@ def render_profile_tab(user):
                     st.success("Senha atualizada com sucesso.")
                 except Exception as e:
                     st.error(f"Erro ao atualizar senha: {e}")
-
 
 def main():
     ensure_session()
@@ -340,7 +325,6 @@ def main():
 
     with profile_tab:
         render_profile_tab(user)
-
 
 if __name__ == "__main__":
     main()
