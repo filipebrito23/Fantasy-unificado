@@ -8,6 +8,13 @@ from app_lib.excel_utils import get_next_id
 from app_lib.transactions_service import pick_domain_ids
 
 
+def _v(row: dict[str, Any], *keys, default=None):
+    for k in keys:
+        if k in row and row.get(k) not in [None, ""]:
+            return row.get(k)
+    return default
+
+
 def get_transaction_default_team_options(teams: pd.DataFrame) -> list[str]:
     if teams.empty or "team_name" not in teams.columns:
         return []
@@ -27,22 +34,31 @@ def get_player_labels(player_lookup: dict[int, str], player_ids: list[int]) -> d
 def get_player_ids_from_team(source_df: pd.DataFrame) -> list[int]:
     if source_df.empty or "player_id" not in source_df.columns:
         return []
-    return (
-        pd.to_numeric(source_df["player_id"], errors="coerce")
-        .dropna()
-        .astype(int)
-        .tolist()
-    )
+    return pd.to_numeric(source_df["player_id"], errors="coerce").dropna().astype(int).tolist()
 
 
 def collect_valid_item_rows(all_item_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     valid_item_rows: list[dict[str, Any]] = []
     errors: list[str] = []
     for idx, row in enumerate(all_item_rows, start=1):
-        if row["asset_id"] in [None, "", "Sem jogadores disponíveis", "Sem picks disponíveis"]:
+        asset = _v(row, "asset_id", "assetid")
+        if asset in [None, "", "Sem jogadores disponíveis", "Sem picks disponíveis"]:
             errors.append(f"Item {idx}: asset inválido.")
-        else:
-            valid_item_rows.append(row)
+            continue
+        item_type = str(_v(row, "item_type", "itemtype", default="")).strip().lower()
+        from_team_id = _v(row, "from_team_id", "fromteamid")
+        to_team_id = _v(row, "to_team_id", "toteamid")
+        from_rt = str(_v(row, "from_roster_type", "fromrostertype", default="")).strip().upper() or None
+        to_rt = str(_v(row, "to_roster_type", "torostertype", default="")).strip().upper() or None
+        valid_item_rows.append({
+            "item_id": _v(row, "item_id", "itemid", default=idx),
+            "item_type": item_type,
+            "asset_id": asset,
+            "from_team_id": from_team_id,
+            "to_team_id": to_team_id,
+            "from_roster_type": from_rt,
+            "to_roster_type": to_rt,
+        })
     if not valid_item_rows:
         errors.append("A transaction precisa ter ao menos um asset válido.")
     return valid_item_rows, errors
@@ -55,6 +71,8 @@ def validate_transaction_form(
     valid_item_rows: list[dict[str, Any]],
 ) -> list[str]:
     errors: list[str] = []
+    tx_type = str(tx_type or "").strip().upper()
+    has_player = any(row.get("item_type") == "player" for row in valid_item_rows)
 
     if tx_type == "TRADE":
         if from_team_id is None or to_team_id is None:
@@ -65,11 +83,7 @@ def validate_transaction_form(
     if tx_type == "MOVE":
         if from_team_id is None:
             errors.append("MOVE exige Time A.")
-        if any(
-            str(row.get("from_roster_type", "")).upper() == str(row.get("to_roster_type", "")).upper()
-            for row in valid_item_rows
-            if row.get("item_type") == "player"
-        ):
+        if has_player and any(str(row.get("from_roster_type", "")).upper() == str(row.get("to_roster_type", "")).upper() for row in valid_item_rows if row.get("item_type") == "player"):
             errors.append("MOVE exige troca entre MAIN e DEV.")
 
     if tx_type == "WAIVE" and to_team_id is not None:
@@ -99,11 +113,10 @@ def build_tx_row(
     from_col = "from_team_id" if "from_team_id" in tx_base_df.columns else "fromteamid"
     to_col = "to_team_id" if "to_team_id" in tx_base_df.columns else "toteamid"
     initiated_col = "initiated_by" if "initiated_by" in tx_base_df.columns else "initiatedby"
-
     return {
         tx_id_col: next_tx_id,
         date_col: str(tx_date),
-        type_col: tx_type,
+        type_col: str(tx_type).strip().upper(),
         "season": tx_season,
         from_col: from_team_id,
         to_col: to_team_id,
@@ -118,78 +131,32 @@ def build_prepared_items(
     next_tx_id: Any,
     valid_item_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    item_id_col = (
-        "item_id"
-        if (not transaction_items_df.empty and "item_id" in transaction_items_df.columns)
-        else "itemid"
-    )
-    transaction_id_col = (
-        "transaction_id"
-        if (not transaction_items_df.empty and "transaction_id" in transaction_items_df.columns)
-        else "transactionid"
-    )
-    item_type_col = (
-        "item_type"
-        if (not transaction_items_df.empty and "item_type" in transaction_items_df.columns)
-        else "itemtype"
-    )
-    asset_id_col = (
-        "asset_id"
-        if (not transaction_items_df.empty and "asset_id" in transaction_items_df.columns)
-        else "assetid"
-    )
-    from_rt_col = (
-        "from_roster_type"
-        if (not transaction_items_df.empty and "from_roster_type" in transaction_items_df.columns)
-        else "fromrostertype"
-    )
-    to_rt_col = (
-        "to_roster_type"
-        if (not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns)
-        else "torostertype"
-    )
-    from_team_col = (
-        "from_team_id"
-        if (not transaction_items_df.empty and "from_team_id" in transaction_items_df.columns)
-        else "fromteamid"
-    )
-    to_team_col = (
-        "to_team_id"
-        if (not transaction_items_df.empty and "to_team_id" in transaction_items_df.columns)
-        else "toteamid"
-    )
-
+    item_id_col = "item_id" if (not transaction_items_df.empty and "item_id" in transaction_items_df.columns) else "itemid"
+    transaction_id_col = "transaction_id" if (not transaction_items_df.empty and "transaction_id" in transaction_items_df.columns) else "transactionid"
+    item_type_col = "item_type" if (not transaction_items_df.empty and "item_type" in transaction_items_df.columns) else "itemtype"
+    asset_id_col = "asset_id" if (not transaction_items_df.empty and "asset_id" in transaction_items_df.columns) else "assetid"
+    from_rt_col = "from_roster_type" if (not transaction_items_df.empty and "from_roster_type" in transaction_items_df.columns) else "fromrostertype"
+    to_rt_col = "to_roster_type" if (not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns) else "torostertype"
+    from_team_col = "from_team_id" if (not transaction_items_df.empty and "from_team_id" in transaction_items_df.columns) else "fromteamid"
+    to_team_col = "to_team_id" if (not transaction_items_df.empty and "to_team_id" in transaction_items_df.columns) else "toteamid"
     prepared_items: list[dict[str, Any]] = []
     for row in valid_item_rows:
-        prepared_items.append(
-            {
-                transaction_id_col: next_tx_id,
-                item_id_col: row["item_id"],
-                item_type_col: row["item_type"],
-                asset_id_col: row["asset_id"],
-                from_rt_col: row["from_roster_type"],
-                to_rt_col: row["to_roster_type"],
-                from_team_col: row["from_team_id"],
-                to_team_col: row["to_team_id"],
-            }
-        )
+        prepared_items.append({
+            transaction_id_col: next_tx_id,
+            item_id_col: row.get("item_id"),
+            item_type_col: row.get("item_type"),
+            asset_id_col: row.get("asset_id"),
+            from_rt_col: row.get("from_roster_type"),
+            to_rt_col: row.get("to_roster_type"),
+            from_team_col: row.get("from_team_id"),
+            to_team_col: row.get("to_team_id"),
+        })
     return prepared_items
 
 
 def normalize_transaction_display_df(df: pd.DataFrame) -> pd.DataFrame:
     display_df = df.copy()
-    object_like_id_cols = [
-        "transaction_id",
-        "transactionid",
-        "item_id",
-        "itemid",
-        "from_team_id",
-        "fromteamid",
-        "to_team_id",
-        "toteamid",
-        "asset_id",
-        "assetid",
-    ]
+    object_like_id_cols = ["transaction_id", "transactionid", "item_id", "itemid", "from_team_id", "fromteamid", "to_team_id", "toteamid", "asset_id", "assetid"]
     for col in object_like_id_cols:
         if col in display_df.columns:
             display_df[col] = display_df[col].fillna("").astype(str)
