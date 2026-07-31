@@ -97,7 +97,7 @@ def render_dev_tab(page_context: dict) -> None:
         column_config={**_compact_team_columns(display_dev), **get_roster_column_config(visible_seasons)},
     )
 
-    with st.expander("Totalizadores da development", expanded=False):
+    with st.expander("Totalizadores de desenvolvimento", expanded=False):
         dev_totals_display = dev_totals.copy()
         for col in ["Salários", "Cap restante"]:
             if col in dev_totals_display.columns:
