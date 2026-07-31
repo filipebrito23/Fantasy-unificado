@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
@@ -8,19 +7,16 @@ from app_lib.role_helpers import is_admin_user
 from app_lib.session_helpers import require_login_v5
 from app_lib.team_tabs_ui import render_main_tab, render_dev_tab, render_picks_tab
 from app_lib.teams_page_context import build_teams_page_context
-from app_lib.teams_ui_helpers import (
-    currency,
-    inject_summary_card_css,
-    render_summary_card,
-)
+from app_lib.teams_ui_helpers import currency, inject_summary_card_css, render_summary_card
 from app_lib.transactions_ui import render_transactions_tab
 from app_lib.transforms import SEASON_LABELS, get_team_options
 
 DEFAULT_FILE = Path("roster.xlsx")
 
-@st.cache_data
+st.cache_data
 def cached_load(file_path: str):
     return load_workbook_data(file_path)
+
 
 user = require_login_v5()
 is_admin = is_admin_user(user)
@@ -40,20 +36,18 @@ if teams.empty:
     st.stop()
 
 if "teams_selected_team_name_v1" not in st.session_state:
-    st.session_state["teams_selected_team_name_v1"] = teams["team_name"].tolist()[0]
+    st.session_state.teams_selected_team_name_v1 = teams["team_name"].tolist()[0]
 
 if "teams_selected_start_season_v1" not in st.session_state:
-    st.session_state["teams_selected_start_season_v1"] = SEASONS[0]
+    st.session_state.teams_selected_start_season_v1 = SEASONS[0]
 
 c1, c2 = st.columns([2, 1])
-
 with c1:
     selected_team_name = st.selectbox(
         "Selecione o time",
         teams["team_name"].tolist(),
         key="teams_selected_team_name_v1",
     )
-
 with c2:
     selected_start_season = st.selectbox(
         "Temporada inicial",
@@ -78,27 +72,27 @@ cap_status = ctx["cap_status"]
 
 inject_summary_card_css()
 
-row_1 = st.columns(3)
-with row_1[0]:
+row1 = st.columns(3)
+with row1[0]:
     render_summary_card("Time", selected_team_name)
-with row_1[1]:
-    render_summary_card("Principal", len(main_roster))
-with row_1[2]:
-    render_summary_card("Desenvolvimento", len(dev_roster))
+with row1[1]:
+    render_summary_card("MAIN players", len(main_roster))
+with row1[2]:
+    render_summary_card("DEV players", len(dev_roster))
 
-row_2 = st.columns(3)
-with row_2[0]:
-    render_summary_card("Salários Principal", currency(main_summary.get("Salários", 0.0)))
-with row_2[1]:
+row2 = st.columns(3)
+with row2[0]:
+    render_summary_card("Salarios MAIN", currency(main_summary.get("Salarios", 0.0)))
+with row2[1]:
     render_summary_card("Cap restante", currency(cap_remaining))
-with row_2[2]:
+with row2[2]:
     render_summary_card("Picks", total_picks)
 
 st.markdown(f"**Status do cap:** {cap_status}")
 st.divider()
 
 tab_main, tab_dev, tab_picks, tab_transactions = st.tabs(
-    ["Principal", "Desenvolvimento", "Picks", "Transações"]
+    ["Principal", "Development", "Picks", "Transactions"]
 )
 
 with tab_main:
@@ -113,7 +107,7 @@ with tab_picks:
 with tab_transactions:
     render_transactions_tab(
         data=data,
-        teams=teams,
+        teams=data["teams"],
         selected_team_id=selected_team_id,
         team_transactions_df=ctx["team_transactions_df"],
         team_lookup=ctx["team_lookup"],
