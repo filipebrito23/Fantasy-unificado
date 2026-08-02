@@ -1,6 +1,6 @@
 import pandas as pd
 from openpyxl import load_workbook
-import streamlit as st
+
 
 from app_lib.excel_utils import load_sheet_df, save_sheet_df, ensure_unique_columns
 
@@ -217,12 +217,15 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     dev_df = load_sheet_df(wb, "development")
     picks_df = load_sheet_df(wb, "picks")
 
+
     tx_type = str(tx_row.get("transaction_type", tx_row.get("transactiontype", ""))).strip().upper()
     from_team_id = _to_int(tx_row.get("from_team_id", tx_row.get("fromteamid")))
     to_team_id = _to_int(tx_row.get("to_team_id", tx_row.get("toteamid")))
 
+
     def num(series):
         return pd.to_numeric(series, errors="coerce")
+
 
     for item in item_rows:
         item_type = str(_item_value(item, "item_type", "itemtype", default="")).strip().lower()
@@ -230,45 +233,39 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
         item_from_team = _to_int(_item_value(item, "from_team_id", "fromteamid", default=from_team_id))
         item_to_team = _to_int(_item_value(item, "to_team_id", "toteamid", default=to_team_id))
 
+
         if item_type == "player":
             pid = _to_int(asset_id)
             if pid is None:
                 continue
-
             from_rt = _normalize_roster_type(_item_value(item, "from_roster_type", "fromrostertype"))
             to_rt = _normalize_roster_type(_item_value(item, "to_roster_type", "torostertype"))
 
-            
 
-            if tx_type == "TRADE":
+            if tx_type in {"TRADE"}:
                 if item_from_team is None or item_to_team is None:
                     continue
-
-                if to_rt not in {"MAIN", "DEV"}:
-                    to_rt = "MAIN"
-
-                source_df = roster_df
+                source_df = roster_df if from_rt == "MAIN" else dev_df
                 target_df = roster_df if to_rt == "MAIN" else dev_df
-
                 if source_df.empty or not {"team_id", "player_id"}.issubset(source_df.columns):
                     continue
-
                 source_mask = num(source_df["team_id"]).eq(item_from_team) & num(source_df["player_id"]).eq(pid)
-
                 if not source_mask.any():
-                    print(f"TRADE REMOVE DEBUG: não encontrou player {pid} no roster do time {item_from_team}")
                     continue
-
-                moved = source_df.loc[source_mask].copy()
-                roster_df = source_df.loc[~source_mask].copy()
-                moved.loc[:, "team_id"] = item_to_team
-
-                if to_rt == "MAIN":
-                    roster_df = pd.concat([roster_df, moved], ignore_index=True)
+                moving_rows = source_df.loc[source_mask].copy()
+                source_df = source_df.loc[~source_mask].copy()
+                moving_rows.loc[:, "team_id"] = item_to_team
+                target_df = pd.concat([target_df, moving_rows], ignore_index=True)
+                if from_rt == "MAIN":
+                    roster_df = source_df
                 else:
-                    dev_df = pd.concat([dev_df, moved], ignore_index=True)
-
+                    dev_df = source_df
+                if to_rt == "MAIN":
+                    roster_df = target_df
+                else:
+                    dev_df = target_df
                 continue
+
 
             if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
                 if from_team_id is None:
@@ -281,84 +278,70 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
                     dev_df = dev_df.loc[~mask].copy()
                 continue
 
+
             if tx_type in {"ADD", "SIGN", "ASSINATURA"}:
                 if item_from_team is None or item_to_team is None:
                     continue
-
                 source_df = roster_df if from_rt == "MAIN" else dev_df
                 target_df = roster_df if to_rt == "MAIN" else dev_df
-
                 if source_df.empty or not {"team_id", "player_id"}.issubset(source_df.columns):
                     continue
-
                 mask = num(source_df["team_id"]).eq(item_from_team) & num(source_df["player_id"]).eq(pid)
                 if not mask.any():
                     continue
-
                 moving_rows = source_df.loc[mask].copy()
                 source_df = source_df.loc[~mask].copy()
-
                 moving_rows.loc[:, "team_id"] = item_to_team
                 target_df = pd.concat([target_df, moving_rows], ignore_index=True)
-
                 if from_rt == "MAIN":
                     roster_df = source_df
                 else:
                     dev_df = source_df
-
                 if to_rt == "MAIN":
                     roster_df = target_df
                 else:
                     dev_df = target_df
-
                 continue
+
 
             if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"}:
                 if from_rt not in {"MAIN", "DEV"} or to_rt not in {"MAIN", "DEV"}:
                     continue
                 if item_from_team is None or item_to_team is None:
                     continue
-
                 source_df = roster_df if from_rt == "MAIN" else dev_df
                 target_df = roster_df if to_rt == "MAIN" else dev_df
-
                 if source_df.empty or not {"team_id", "player_id"}.issubset(source_df.columns):
                     continue
-
                 source_mask = num(source_df["team_id"]).eq(item_from_team) & num(source_df["player_id"]).eq(pid)
                 if not source_mask.any():
                     continue
-
                 moving_rows = source_df.loc[source_mask].copy()
                 source_df = source_df.loc[~source_mask].copy()
-
                 moving_rows.loc[:, "team_id"] = item_to_team
                 target_df = pd.concat([target_df, moving_rows], ignore_index=True)
-
                 if from_rt == "MAIN":
                     roster_df = source_df
                 else:
                     dev_df = source_df
-
                 if to_rt == "MAIN":
                     roster_df = target_df
                 else:
                     dev_df = target_df
+
 
         elif item_type == "pick" and not picks_df.empty:
             id_col = picks_df.columns[0]
             owner_cols = [c for c in picks_df.columns if "owner" in c.lower() or "team" in c.lower()]
             if not owner_cols or item_from_team is None or item_to_team is None:
                 continue
-
             owner_col = owner_cols[0]
             owner_ids = pd.to_numeric(picks_df[owner_col], errors="coerce")
-
             if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
                 continue
-
             mask = picks_df[id_col].astype(str).eq(str(asset_id)) & owner_ids.eq(item_from_team)
             picks_df.loc[mask, owner_col] = item_to_team
+
 
     save_sheet_df(wb, "roster", roster_df)
     save_sheet_df(wb, "development", dev_df)

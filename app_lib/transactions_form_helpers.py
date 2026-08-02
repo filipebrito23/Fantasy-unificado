@@ -139,18 +139,21 @@ def build_prepared_items(
     to_rt_col = "to_roster_type" if (not transaction_items_df.empty and "to_roster_type" in transaction_items_df.columns) else "torostertype"
     from_team_col = "from_team_id" if (not transaction_items_df.empty and "from_team_id" in transaction_items_df.columns) else "fromteamid"
     to_team_col = "to_team_id" if (not transaction_items_df.empty and "to_team_id" in transaction_items_df.columns) else "toteamid"
+
     prepared_items: list[dict[str, Any]] = []
     for row in valid_item_rows:
-        prepared_items.append({
-            transaction_id_col: next_tx_id,
-            item_id_col: row.get("item_id"),
-            item_type_col: row.get("item_type"),
-            asset_id_col: row.get("asset_id"),
-            from_rt_col: row.get("from_roster_type"),
-            to_rt_col: row.get("to_roster_type"),
-            from_team_col: row.get("from_team_id"),
-            to_team_col: row.get("to_team_id"),
-        })
+        prepared_items.append(
+            {
+                transaction_id_col: next_tx_id,
+                item_id_col: row.get("item_id"),
+                item_type_col: row.get("item_type"),
+                asset_id_col: row.get("asset_id"),
+                from_rt_col: row.get("from_roster_type"),
+                to_rt_col: row.get("to_roster_type"),
+                from_team_col: row.get("from_team_id"),
+                to_team_col: row.get("to_team_id"),
+            }
+        )
     return prepared_items
 
 

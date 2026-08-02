@@ -1,8 +1,3 @@
-Proximos passos
-
-Verificar teams antigo pra fazer as transactions
-
-Continuar Rota Norte para lei.py
 
 
 readme

@@ -180,6 +180,7 @@ def render_transactions_tab(
 
             show_to_team = tx_type == "TRADE"
             show_move_mode = tx_type == "MOVE"
+
             col_a, col_b = st.columns(2)
             with col_a:
                 from_team_name = st.selectbox("Time A", team_options, key="tx_from_team_v4")
@@ -231,6 +232,11 @@ def render_transactions_tab(
                 default_count=from_default,
             )
 
+            if tx_type == "TRADE":
+                for row in from_side_items:
+                    row["from_team_id"] = from_team_id
+                    row["to_team_id"] = to_team_id
+
             to_side_items = []
             if show_to_team:
                 to_pick_options = pick_domain_ids(data, to_team_id) if to_team_id is not None else []
@@ -246,13 +252,23 @@ def render_transactions_tab(
                     default_count=1,
                 )
 
+                if tx_type == "TRADE":
+                    for row in to_side_items:
+                        row["from_team_id"] = to_team_id
+                        row["to_team_id"] = from_team_id
+
             all_item_rows = from_side_items + to_side_items
             save_tx = st.button("Salvar transaction", type="primary", key="save_tx_v4")
 
             if save_tx:
                 valid_item_rows, form_errors = collect_valid_item_rows(all_item_rows)
+
+                if tx_type == "TRADE" and (from_team_id is None or to_team_id is None):
+                    form_errors.append("TRADE exige Time A e Time B.")
+
                 form_errors.extend(validate_transaction_form(tx_type, from_team_id, to_team_id, valid_item_rows))
                 form_errors.extend(validate_items_bilateral(data, valid_item_rows, tx_type))
+
                 if form_errors:
                     for err in form_errors:
                         st.error(err)
