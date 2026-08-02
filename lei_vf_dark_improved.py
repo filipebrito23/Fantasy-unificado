@@ -99,26 +99,6 @@ def render_password_change(user):
                 st.rerun()
 
 
-def theme_colors():
-    bg = st.get_option("theme.backgroundColor") or "#ffffff"
-    dark = str(bg).lower() not in ("#ffffff", "#fff", "white")
-    if dark:
-        return {
-            "dark": True,
-            "panel_bg": "#1f1f1f",
-            "panel_border": "#3a3a3a",
-            "text": "#ffffff",
-            "muted": "#cfcfcf",
-        }
-    return {
-        "dark": False,
-        "panel_bg": "#ffffff",
-        "panel_border": "#dddddd",
-        "text": "#111111",
-        "muted": "#666666",
-    }
-
-
 def badge_html(text, bg, fg="#ffffff"):
     return f"""
     <span style="
@@ -131,7 +111,6 @@ def badge_html(text, bg, fg="#ffffff"):
         font-weight:700;
         line-height:1.2;
         margin-right:6px;
-        margin-bottom:6px;
         white-space:nowrap;
     ">{text}</span>
     """
@@ -150,7 +129,7 @@ def card_html(title, value, subtitle="", accent="#4f81bd", dark=False):
         border-radius:14px;
         padding:16px 18px;
         background:{bg};
-        box-shadow:0 1px 4px rgba(0,0,0,0.08);
+        box-shadow:0 1px 4px rgba(0,0,0,0.12);
         height:100%;
         color:{value_color};
     ">
@@ -170,7 +149,7 @@ def card_html(title, value, subtitle="", accent="#4f81bd", dark=False):
 def urgency_accent(remaining_text: str) -> tuple[str, str]:
     t = str(remaining_text).lower()
     if t in ("encerrado", "expirado", "-", "nan"):
-        return "#6c757d", "Sem prazo"
+        return "#6c757d", "Baixa/sem prazo"
     if "min" in t:
         digits = "".join(ch for ch in t if ch.isdigit())
         try:
@@ -188,8 +167,6 @@ def urgency_accent(remaining_text: str) -> tuple[str, str]:
 
 
 def render_players_tab(position, status_filter):
-    colors = theme_colors()
-
     st.subheader("Propostas")
     st.caption("Monitore propostas ativas, tempo restante e situação de cada jogador.")
 
@@ -210,17 +187,17 @@ def render_players_tab(position, status_filter):
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(card_html("Jogadores exibidos", len(players), "Total no filtro atual", "#4f81bd", dark=colors["dark"]), unsafe_allow_html=True)
+        st.markdown(card_html("Jogadores exibidos", len(players), "Total no filtro atual", "#4f81bd", dark=True), unsafe_allow_html=True)
     with c2:
-        st.markdown(card_html("Propostas abertas", len(open_players), "Em monitoramento", "#2ca02c", dark=colors["dark"]), unsafe_allow_html=True)
+        st.markdown(card_html("Propostas abertas", len(open_players), "Em monitoramento", "#2ca02c", dark=True), unsafe_allow_html=True)
     with c3:
-        st.markdown(card_html("Propostas encerradas", len(closed_players), "Já finalizadas", "#d62728", dark=colors["dark"]), unsafe_allow_html=True)
+        st.markdown(card_html("Propostas encerradas", len(closed_players), "Já finalizadas", "#d62728", dark=True), unsafe_allow_html=True)
     with c4:
         if not open_players.empty:
             soonest = open_players.sort_values("expires_at").iloc[0]
-            st.markdown(card_html("Mais urgente", format_remaining(soonest["expires_at"]), soonest["player_name"], "#ff9900", dark=colors["dark"]), unsafe_allow_html=True)
+            st.markdown(card_html("Mais urgente", format_remaining(soonest["expires_at"]), soonest["player_name"], "#ff9900", dark=True), unsafe_allow_html=True)
         else:
-            st.markdown(card_html("Mais urgente", "-", "Sem propostas abertas", "#999999", dark=colors["dark"]), unsafe_allow_html=True)
+            st.markdown(card_html("Mais urgente", "-", "Sem propostas abertas", "#999999", dark=True), unsafe_allow_html=True)
 
     st.markdown("### Destaques")
     if open_players.empty:
@@ -232,29 +209,25 @@ def render_players_tab(position, status_filter):
             accent, urgency_label = urgency_accent(row["tempo_restante"])
             status_bg = "#2ca02c" if str(row["status"]).upper() == "OPEN" else "#6c757d"
             tipo_bg = "#1f77b4" if row["tipo"] == "Oferta" else "#9467bd"
-            card_bg = colors["panel_bg"]
-            card_border = colors["panel_border"]
-            text_color = colors["text"]
-            muted = colors["muted"]
             with cols_cards[idx]:
                 st.markdown(
                     f"""
                     <div style="
-                        border:1px solid {card_border};
+                        border:1px solid #3a3a3a;
                         border-radius:16px;
                         padding:16px;
-                        background:{card_bg};
-                        box-shadow:0 2px 8px rgba(0,0,0,0.06);
-                        min-height:265px;
-                        color:{text_color};
+                        background:#1f1f1f;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.18);
+                        min-height:260px;
+                        color:#ffffff;
                     ">
-                        <div style="font-size:12px; color:{muted}; text-transform:uppercase; letter-spacing:0.4px;">Proposta ativa</div>
-                        <div style="font-size:22px; font-weight:800; margin-top:6px; color:{text_color};">{row['player_name']}</div>
+                        <div style="font-size:12px; color:#c9c9c9; text-transform:uppercase; letter-spacing:0.4px;">Proposta ativa</div>
+                        <div style="font-size:22px; font-weight:800; margin-top:6px; color:#ffffff;">{row['player_name']}</div>
                         <div style="margin-top:10px;">{badge_html(str(row['status']), status_bg)}{badge_html(str(row['tipo']), tipo_bg)}{badge_html(urgency_label, accent)}</div>
-                        <div style="margin-top:12px; font-size:14px; color:{text_color};"><b>Valor:</b> {row['valor_fmt']}</div>
-                        <div style="font-size:14px; color:{text_color};"><b>Tempo restante:</b> {row['tempo_restante']}</div>
-                        <div style="font-size:14px; color:{text_color};"><b>Dono:</b> {row['dono'] or '-'}</div>
-                        <div style="font-size:14px; color:{text_color};"><b>Time ativo:</b> {row['time_ativo'] or '-'}</div>
+                        <div style="margin-top:12px; font-size:14px; color:#f1f1f1;"><b>Valor:</b> {row['valor_fmt']}</div>
+                        <div style="font-size:14px; color:#f1f1f1;"><b>Tempo restante:</b> {row['tempo_restante']}</div>
+                        <div style="font-size:14px; color:#f1f1f1;"><b>Dono:</b> {row['dono'] or '-'}</div>
+                        <div style="font-size:14px; color:#f1f1f1;"><b>Time ativo:</b> {row['time_ativo'] or '-'}</div>
                         <div style="margin-top:12px; padding:10px 12px; border-radius:10px; background:{accent}; color:white; font-weight:800; text-align:center;">
                             Proposta ativa: {formatar_brl(float(row['proposta_ativa'])) if pd.notna(row['proposta_ativa']) else '-'}
                         </div>
@@ -285,8 +258,6 @@ def render_players_tab(position, status_filter):
 
 
 def render_bid_form_tab(user):
-    colors = theme_colors()
-
     st.subheader("Nova proposta")
     st.caption("Envie uma nova oferta ou renovação para um jogador aberto.")
 
@@ -313,26 +284,25 @@ def render_bid_form_tab(user):
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(card_html("Jogador", selected_row["player_name"], "Selecionado para lance", "#4f81bd", dark=colors["dark"]), unsafe_allow_html=True)
+        st.markdown(card_html("Jogador", selected_row["player_name"], "Selecionado para lance", "#4f81bd", dark=True), unsafe_allow_html=True)
     with c2:
-        st.markdown(card_html("Proposta ativa", formatar_brl(float(selected_row["proposta_ativa"])) if pd.notna(selected_row["proposta_ativa"]) else "-", "Maior lance atual", accent, dark=colors["dark"]), unsafe_allow_html=True)
+        st.markdown(card_html("Proposta ativa", formatar_brl(float(selected_row["proposta_ativa"])) if pd.notna(selected_row["proposta_ativa"]) else "-", "Maior lance atual", accent, dark=True), unsafe_allow_html=True)
     with c3:
-        st.markdown(card_html("Tempo restante", tempo_txt, urgency_label, accent, dark=colors["dark"]), unsafe_allow_html=True)
+        st.markdown(card_html("Tempo restante", tempo_txt, urgency_label, accent, dark=True), unsafe_allow_html=True)
     with c4:
-        st.markdown(card_html("Status", str(selected_row["status"]), "Situação atual do leilão", "#2ca02c" if str(selected_row["status"]).upper() == "OPEN" else "#6c757d", dark=colors["dark"]), unsafe_allow_html=True)
+        st.markdown(card_html("Status", str(selected_row["status"]), "Situação atual do leilão", "#2ca02c" if str(selected_row["status"]).upper() == "OPEN" else "#6c757d", dark=True), unsafe_allow_html=True)
 
     st.markdown(
         f"""
         <div style="
-            border:1px solid {colors['panel_border']};
+            border:1px solid #3a3a3a;
             border-radius:16px;
             padding:16px;
-            background:{colors['panel_bg']};
-            color:{colors['text']};
+            background:#1f1f1f;
+            color:#ffffff;
             margin-bottom:16px;
-            box-shadow:0 2px 8px rgba(0,0,0,0.06);
         ">
-            <div style="font-size:13px; color:{colors['muted']}; text-transform:uppercase;">Proposta em destaque</div>
+            <div style="font-size:13px; color:#cfcfcf; text-transform:uppercase;">Proposta em destaque</div>
             <div style="font-size:28px; font-weight:800; margin-top:4px;">{selected_row['player_name']}</div>
             <div style="margin-top:10px;">{badge_html(str(selected_row['status']), '#2ca02c')} {badge_html('Proposta ativa', accent)} {badge_html('Tipo: ' + ('Renovação' if selected_row['is_renewal'] == 1 else 'Oferta'), '#1f77b4' if selected_row['is_renewal'] != 1 else '#9467bd')}</div>
             <div style="margin-top:12px; font-size:14px;"><b>Posição:</b> {selected_row['position']} | <b>Time atual:</b> {selected_row['dono'] or '-'} | <b>Time ativo:</b> {selected_row['time_ativo'] or '-'}</div>

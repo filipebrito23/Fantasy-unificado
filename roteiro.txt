@@ -1,10 +1,8 @@
-extrair helpers de formatação;
+Proximos passos
 
-extrair consultas e comandos para um service;
+Verificar teams antigo pra fazer as transactions
 
-reorganizar a página em funções por aba;
-
-só então refinar UI e filtros.
+Continuar Rota Norte para lei.py
 
 
 readme
