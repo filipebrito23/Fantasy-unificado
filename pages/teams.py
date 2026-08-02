@@ -24,7 +24,7 @@ user = require_login_v5()
 is_admin = is_admin_user(user)
 
 
-# Cabeç·¬ho clean
+# Cabeçalho clean
 st.title("Elencos")
 st.caption("Visão geral do time e movimentações")
 

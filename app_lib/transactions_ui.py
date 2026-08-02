@@ -179,6 +179,7 @@ def render_transactions_tab(
             tx_season = st.selectbox("Season", SEASONS, format_func=lambda x: SEASON_LABELS[x], key="tx_season_v4")
 
             show_to_team = tx_type == "TRADE"
+            show_move_mode = tx_type == "MOVE"
             col_a, col_b = st.columns(2)
             with col_a:
                 from_team_name = st.selectbox("Time A", team_options, key="tx_from_team_v4")
