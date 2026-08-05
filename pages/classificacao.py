@@ -44,8 +44,8 @@ def style_table(df: pd.DataFrame):
 
 
 def render_classificacao_principal(standings_df: pd.DataFrame):
-    st.subheader("Classificacao")
-    st.caption(f"Top {PLAYOFF_SPOTS} avancam para os playoffs. Os ultimos {ELIMINATED_SPOTS} sao eliminados.")
+    st.subheader("Classificação")
+    st.caption(f"Top {PLAYOFF_SPOTS} avançam para os playoffs. Os últimos {ELIMINATED_SPOTS} são eliminados.")
     styled = add_status(standings_df)
     st.table(style_table(styled))
 
@@ -116,7 +116,7 @@ def render_confronto_tab(matrix_df: pd.DataFrame):
     st.pyplot(fig)
 
 def render_calendario_tab(schedule_check_df: pd.DataFrame, games_df: pd.DataFrame):
-    st.subheader("Calendario")
+    st.subheader("Calendário")
     st.caption("Linha do tempo da temporada")
 
     # Narrativa por semana/rodada
@@ -139,8 +139,8 @@ def render_calendario_tab(schedule_check_df: pd.DataFrame, games_df: pd.DataFram
 
 
 def main():
-    st.title("Classificacao")
-    st.caption("Classificacao, confronto direto e calendario da temporada")
+    st.title("Classificação")
+    st.caption("Classificação, confronto direto e calendário da temporada")
 
     if not DEFAULT_FILE.exists():
         st.error("Arquivo roster.xlsx nao encontrado na pasta do projeto.")
@@ -174,7 +174,7 @@ def main():
 
     bundle = build_classification_bundle(games_df, teams_df)
 
-    tabs = st.tabs(["Classificacao", "Confronto direto", "Calendario"])
+    tabs = st.tabs(["Classificação", "Confronto direto", "Calendário"])
     with tabs[0]:
         render_classificacao_principal(bundle.standings)
         render_playoffs_eliminados(bundle.standings)

@@ -25,7 +25,7 @@ from app_lib.db_v5 import engine, healthcheck_db_v5, init_db_v5, is_postgres_v5
 POSITIONS = ["Todas", "PG", "PG_SG", "SG", "SG_SF", "SF", "SF_PF", "PF", "PF_C", "C"]
 STATUS_FILTERS = ["Todos", "OPEN", "CLOSED"]
 
-st.set_page_config(page_title="Leilão NBA Fantasy v5", layout="wide")
+st.set_page_config(page_title="Leilão da Free Agency - NBA Keeper", layout="wide")
 
 
 def get_environment_label_v5():
