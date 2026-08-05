@@ -14,66 +14,66 @@ def render_empty_state(message: str):
 
 
 def render_comments(tab_key: str, ctx: HomePageContext):
-    st.markdown("#### Comentários")
-    comments_df = ctx.comments_by_tab.get(tab_key, pd.DataFrame())
+    with st.expander("Comentários", expanded=False):
+        comments_df = ctx.comments_by_tab.get(tab_key, pd.DataFrame())
 
-    if comments_df.empty:
-        render_empty_state("Sem comentários ainda.")
-    else:
-        for _, row in comments_df.iterrows():
-            pin = "📌 " if bool(row.get("is_pinned")) else ""
-            st.markdown(f"**{pin}{row['author']}** — {row['created_at']}")
-            st.write(row["comment_text"])
-            st.divider()
-
-    comment_text = st.text_area("Novo comentário", key=f"comment_box_{tab_key}")
-    if st.button("Publicar comentário", key=f"comment_btn_{tab_key}"):
-        if comment_text.strip():
-            create_comment(
-                tab_key=tab_key,
-                author=ctx.user_label,
-                comment_text=comment_text.strip(),
-            )
-            st.success("Comentário publicado.")
-            st.rerun()
+        if comments_df.empty:
+            render_empty_state("Sem comentários ainda.")
         else:
-            st.error("Digite um comentário antes de publicar.")
+            for _, row in comments_df.iterrows():
+                pin = "📌 " if bool(row.get("is_pinned")) else ""
+                st.markdown(f"**{pin}{row['author']}** — {row['created_at']}")
+                st.write(row["comment_text"])
+                st.divider()
+
+        comment_text = st.text_area("Novo comentário", key=f"comment_box_{tab_key}")
+        if st.button("Publicar comentário", key=f"comment_btn_{tab_key}"):
+            if comment_text.strip():
+                create_comment(
+                    tab_key=tab_key,
+                    author=ctx.user_label,
+                    comment_text=comment_text.strip(),
+                )
+                st.success("Comentário publicado.")
+                st.rerun()
+            else:
+                st.error("Digite um comentário antes de publicar.")
 
 
 def render_posts(tab_key: str, ctx: HomePageContext):
-    posts_df = ctx.posts_by_tab.get(tab_key, pd.DataFrame())
+    with st.expander("Posts", expanded=True):
+        posts_df = ctx.posts_by_tab.get(tab_key, pd.DataFrame())
 
-    if not posts_df.empty:
-        st.markdown("#### Posts")
-        for _, row in posts_df.iterrows():
-            pin = "📌 " if bool(row.get("is_pinned")) else ""
-            st.markdown(f"### {pin}{row['title']}")
-            st.caption(f"{row['author']} • {row['created_at']}")
-            st.markdown(row["content_md"])
-            st.divider()
-    else:
-        render_empty_state("Nenhum post cadastrado.")
+        if not posts_df.empty:
+            for _, row in posts_df.iterrows():
+                pin = "📌 " if bool(row.get("is_pinned")) else ""
+                st.markdown(f"### {pin}{row['title']}")
+                st.caption(f"{row['author']} • {row['created_at']}")
+                st.markdown(row["content_md"])
+                st.divider()
+        else:
+            render_empty_state("Nenhum post cadastrado.")
 
-    if ctx.is_admin:
-        with st.form(f"post_form_{tab_key}", clear_on_submit=True):
-            title = st.text_input("Título")
-            content_md = st.text_area("Conteúdo", height=180)
-            is_pinned = st.checkbox("Fixar post")
-            submitted = st.form_submit_button("Publicar post")
+        if ctx.is_admin:
+            with st.form(f"post_form_{tab_key}", clear_on_submit=True):
+                title = st.text_input("Título")
+                content_md = st.text_area("Conteúdo", height=180)
+                is_pinned = st.checkbox("Fixar post")
+                submitted = st.form_submit_button("Publicar post")
 
-        if submitted:
-            if title.strip() and content_md.strip():
-                create_post(
-                    tab_key=tab_key,
-                    author=ctx.user_label,
-                    title=title.strip(),
-                    content_md=content_md.strip(),
-                    is_pinned=is_pinned,
-                )
-                st.success("Post criado.")
-                st.rerun()
-            else:
-                st.error("Título e conteúdo são obrigatórios.")
+            if submitted:
+                if title.strip() and content_md.strip():
+                    create_post(
+                        tab_key=tab_key,
+                        author=ctx.user_label,
+                        title=title.strip(),
+                        content_md=content_md.strip(),
+                        is_pinned=is_pinned,
+                    )
+                    st.success("Post criado.")
+                    st.rerun()
+                else:
+                    st.error("Título e conteúdo são obrigatórios.")
 
 
 def render_links_section(section_name: str, ctx: HomePageContext):
@@ -156,7 +156,6 @@ def render_home_overview(ctx: HomePageContext):
 
 
 def render_feed_tab(tab_key: str, ctx: HomePageContext):
-    st.markdown("## Feed da aba")
     render_posts(tab_key, ctx)
     render_comments(tab_key, ctx)
 

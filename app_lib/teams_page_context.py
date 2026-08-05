@@ -1,4 +1,6 @@
+import os
 import pandas as pd
+import streamlit as st
 
 from app_lib.transforms import (
     get_team_options,
@@ -21,7 +23,6 @@ from app_lib.teams_ui_helpers import build_red_flags
 def _build_team_lookup(teams_df: pd.DataFrame) -> dict:
     if teams_df.empty or not {"team_id", "team_name"}.issubset(teams_df.columns):
         return {}
-
     team_map = teams_df[["team_id", "team_name"]].drop_duplicates()
     return dict(zip(team_map["team_id"], team_map["team_name"]))
 
@@ -29,7 +30,6 @@ def _build_team_lookup(teams_df: pd.DataFrame) -> dict:
 def _build_player_lookup(players_df: pd.DataFrame) -> dict:
     if players_df.empty or not {"player_id", "player_name"}.issubset(players_df.columns):
         return {}
-
     return dict(zip(players_df["player_id"], players_df["player_name"]))
 
 
@@ -71,7 +71,6 @@ def _build_picks_display(team_picks_df: pd.DataFrame, team_lookup: dict) -> pd.D
 def _get_cap_status(cap_remaining: float) -> str:
     if pd.isna(cap_remaining):
         cap_remaining = 0.0
-
     if cap_remaining < 0:
         return "🔴 Cap estourado"
     if cap_remaining <= 5_000_000:
@@ -79,7 +78,26 @@ def _get_cap_status(cap_remaining: float) -> str:
     return "🟢 Cap confortável"
 
 
-def build_teams_page_context(data: dict, selected_team_name: str, selected_start_season: str) -> dict:
+@st.cache_data(show_spinner=False)
+def _cached_team_transactions_history(
+    tx_mtime: float,
+    items_mtime: float,
+    transactions_df: pd.DataFrame,
+    transaction_items_df: pd.DataFrame,
+    selected_team_id: int,
+    team_lookup: dict,
+    player_lookup: dict,
+) -> pd.DataFrame:
+    return build_transactions_history(
+        transactions_df,
+        transaction_items_df,
+        selected_team_id,
+        team_lookup,
+        player_lookup,
+    )
+
+
+def build_teams_page_context(data: dict, selected_team_name: str, selected_start_season: str, workbook_path: str | None = None) -> dict:
     teams = get_team_options(data["teams"])
 
     selected_team_id = int(
@@ -129,7 +147,12 @@ def build_teams_page_context(data: dict, selected_team_name: str, selected_start
     transactions_df = data.get(TX_SHEET, pd.DataFrame())
     transaction_items_df = data.get(TX_ITEMS_SHEET, pd.DataFrame())
 
-    team_transactions_df = build_transactions_history(
+    tx_mtime = os.path.getmtime(workbook_path) if workbook_path and os.path.exists(workbook_path) else 0.0
+    items_mtime = tx_mtime
+
+    team_transactions_df = _cached_team_transactions_history(
+        tx_mtime,
+        items_mtime,
         transactions_df,
         transaction_items_df,
         selected_team_id,

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 from app_lib.home_service import (
     ensure_default_home_tabs,
@@ -31,26 +32,42 @@ class HomePageContext:
     is_admin: bool
 
 
-def build_home_page_context(user: Any, user_label: str, is_admin: bool) -> HomePageContext:
+@st.cache_data(show_spinner=False)
+def _cached_home_core():
     ensure_default_home_tabs()
     tabs_df = get_home_tabs()
-
-    posts_by_tab: dict[str, pd.DataFrame] = {}
-    comments_by_tab: dict[str, pd.DataFrame] = {}
-    for tab_key in tabs_df["tab_key"].tolist() if not tabs_df.empty and "tab_key" in tabs_df.columns else []:
-        posts_by_tab[tab_key] = get_posts_by_tab(tab_key)
-        comments_by_tab[tab_key] = get_comments(tab_key)
-
+    active_rule_df = get_active_rule()
+    calendar_df = get_calendar_events()
+    draft_df = get_draft_board()
     links_by_section = {
         "jogos": get_links_by_section("jogos"),
         "links": get_links_by_section("links"),
     }
+    return tabs_df, active_rule_df, calendar_df, draft_df, links_by_section
+
+
+@st.cache_data(show_spinner=False)
+def _cached_tab_content(tab_key: str):
+    return get_posts_by_tab(tab_key), get_comments(tab_key)
+
+
+def build_home_page_context(user: Any, user_label: str, is_admin: bool) -> HomePageContext:
+    tabs_df, active_rule_df, calendar_df, draft_df, links_by_section = _cached_home_core()
+
+    posts_by_tab: dict[str, pd.DataFrame] = {}
+    comments_by_tab: dict[str, pd.DataFrame] = {}
+
+    tab_keys = tabs_df["tab_key"].tolist() if not tabs_df.empty and "tab_key" in tabs_df.columns else []
+    for tab_key in tab_keys:
+        posts_df, comments_df = _cached_tab_content(tab_key)
+        posts_by_tab[tab_key] = posts_df
+        comments_by_tab[tab_key] = comments_df
 
     return HomePageContext(
         tabs_df=tabs_df,
-        active_rule_df=get_active_rule(),
-        calendar_df=get_calendar_events(),
-        draft_df=get_draft_board(),
+        active_rule_df=active_rule_df,
+        calendar_df=calendar_df,
+        draft_df=draft_df,
         posts_by_tab=posts_by_tab,
         comments_by_tab=comments_by_tab,
         links_by_section=links_by_section,

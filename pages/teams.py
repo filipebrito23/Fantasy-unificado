@@ -79,6 +79,7 @@ ctx = build_teams_page_context(
     data=data,
     selected_team_name=selected_team_name,
     selected_start_season=selected_start_season,
+    workbook_path=str(DEFAULT_FILE),
 )
 
 
