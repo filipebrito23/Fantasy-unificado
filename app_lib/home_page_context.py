@@ -24,8 +24,6 @@ class HomePageContext:
     active_rule_df: pd.DataFrame
     calendar_df: pd.DataFrame
     draft_df: pd.DataFrame
-    posts_by_tab: dict[str, pd.DataFrame]
-    comments_by_tab: dict[str, pd.DataFrame]
     links_by_section: dict[str, pd.DataFrame]
     user: Any
     user_label: str
@@ -47,31 +45,32 @@ def _cached_home_core():
 
 
 @st.cache_data(show_spinner=False)
-def _cached_tab_content(tab_key: str):
-    return get_posts_by_tab(tab_key), get_comments(tab_key)
+def _cached_tab_posts(tab_key: str):
+    return get_posts_by_tab(tab_key)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_tab_comments(tab_key: str):
+    return get_comments(tab_key)
 
 
 def build_home_page_context(user: Any, user_label: str, is_admin: bool) -> HomePageContext:
     tabs_df, active_rule_df, calendar_df, draft_df, links_by_section = _cached_home_core()
-
-    posts_by_tab: dict[str, pd.DataFrame] = {}
-    comments_by_tab: dict[str, pd.DataFrame] = {}
-
-    tab_keys = tabs_df["tab_key"].tolist() if not tabs_df.empty and "tab_key" in tabs_df.columns else []
-    for tab_key in tab_keys:
-        posts_df, comments_df = _cached_tab_content(tab_key)
-        posts_by_tab[tab_key] = posts_df
-        comments_by_tab[tab_key] = comments_df
-
     return HomePageContext(
         tabs_df=tabs_df,
         active_rule_df=active_rule_df,
         calendar_df=calendar_df,
         draft_df=draft_df,
-        posts_by_tab=posts_by_tab,
-        comments_by_tab=comments_by_tab,
         links_by_section=links_by_section,
         user=user,
         user_label=user_label,
         is_admin=is_admin,
     )
+
+
+def get_tab_posts(tab_key: str) -> pd.DataFrame:
+    return _cached_tab_posts(tab_key)
+
+
+def get_tab_comments(tab_key: str) -> pd.DataFrame:
+    return _cached_tab_comments(tab_key)

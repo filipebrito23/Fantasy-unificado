@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from app_lib.home_service import create_comment, create_post
-from app_lib.home_page_context import HomePageContext
+from app_lib.home_page_context import HomePageContext, get_tab_comments, get_tab_posts
 
 
 def render_empty_state(message: str):
@@ -15,7 +15,7 @@ def render_empty_state(message: str):
 
 def render_comments(tab_key: str, ctx: HomePageContext):
     with st.expander("Comentários", expanded=False):
-        comments_df = ctx.comments_by_tab.get(tab_key, pd.DataFrame())
+        comments_df = get_tab_comments(tab_key)
 
         if comments_df.empty:
             render_empty_state("Sem comentários ainda.")
@@ -34,6 +34,7 @@ def render_comments(tab_key: str, ctx: HomePageContext):
                     author=ctx.user_label,
                     comment_text=comment_text.strip(),
                 )
+                st.cache_data.clear()
                 st.success("Comentário publicado.")
                 st.rerun()
             else:
@@ -42,7 +43,7 @@ def render_comments(tab_key: str, ctx: HomePageContext):
 
 def render_posts(tab_key: str, ctx: HomePageContext):
     with st.expander("Posts", expanded=True):
-        posts_df = ctx.posts_by_tab.get(tab_key, pd.DataFrame())
+        posts_df = get_tab_posts(tab_key)
 
         if not posts_df.empty:
             for _, row in posts_df.iterrows():
@@ -70,6 +71,7 @@ def render_posts(tab_key: str, ctx: HomePageContext):
                         content_md=content_md.strip(),
                         is_pinned=is_pinned,
                     )
+                    st.cache_data.clear()
                     st.success("Post criado.")
                     st.rerun()
                 else:
@@ -147,15 +149,15 @@ def render_home_overview(ctx: HomePageContext):
     draft_status = "-"
     if not ctx.draft_df.empty and "status" in ctx.draft_df.columns:
         draft_status = str(ctx.draft_df.iloc[0].get("status", "-"))
-    recent_activity = sum(len(df) for df in ctx.posts_by_tab.values()) + sum(len(df) for df in ctx.comments_by_tab.values())
 
     c1.metric("Regra vigente", rule_title)
     c2.metric("Próximo evento", next_event)
     c3.metric("Draft", draft_status)
-    c4.metric("Atividades", recent_activity)
+    c4.metric("Aba ativa", len(ctx.tabs_df))
 
 
 def render_feed_tab(tab_key: str, ctx: HomePageContext):
+    st.markdown("## Feed da aba")
     render_posts(tab_key, ctx)
     render_comments(tab_key, ctx)
 
