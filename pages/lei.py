@@ -332,6 +332,7 @@ def render_bid_form_tab(user):
             padding:16px;
             background:{colors['panel_bg']};
             color:{colors['text']};
+            margin-top:16px;
             margin-bottom:16px;
             box-shadow:0 2px 8px rgba(0,0,0,0.06);
         ">
