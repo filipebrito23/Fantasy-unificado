@@ -28,7 +28,11 @@ from app_lib.transactions_form_helpers import (
 from app_lib.transforms import SEASON_LABELS, SEASONS
 
 
-def _get_team_player_source_df(data: dict[str, pd.DataFrame], team_id: int | None, roster_type: str | None) -> pd.DataFrame:
+def _get_team_player_source_df(
+    data: dict[str, pd.DataFrame],
+    team_id: int | None,
+    roster_type: str | None,
+) -> pd.DataFrame:
     if team_id is None or roster_type is None:
         return pd.DataFrame()
     if roster_type == "MAIN":
@@ -60,7 +64,11 @@ def _render_asset_row(
 
     if item_type == "player":
         with c2:
-            from_roster_type = st.selectbox("Origem do jogador", ["MAIN", "DEV"], key=f"{prefix}_roster_type_{i}")
+            from_roster_type = st.selectbox(
+                "Origem do jogador",
+                ["MAIN", "DEV"],
+                key=f"{prefix}_roster_type_{i}",
+            )
 
         source_df = _get_team_player_source_df(data, team_id, from_roster_type)
         player_ids = get_player_ids_from_team(source_df)
@@ -85,16 +93,35 @@ def _render_asset_row(
         with c4:
             if allow_roster_move:
                 roster_dest_options = [rt for rt in ["MAIN", "DEV"] if rt != from_roster_type]
-                to_roster_type = st.selectbox("Destino do jogador", roster_dest_options, key=f"{prefix}_to_roster_type_{i}")
+                to_roster_type = st.selectbox(
+                    "Destino do jogador",
+                    roster_dest_options,
+                    key=f"{prefix}_to_roster_type_{i}",
+                )
             else:
-                st.selectbox("Destino do jogador", ["-"], key=f"{prefix}_to_roster_type_placeholder_{i}", disabled=True)
+                st.selectbox(
+                    "Destino do jogador",
+                    ["-"],
+                    key=f"{prefix}_to_roster_type_placeholder_{i}",
+                    disabled=True,
+                )
 
     else:
         with c2:
-            st.selectbox("Origem do jogador", ["-"], key=f"{prefix}_roster_type_placeholder_{i}", disabled=True)
+            st.selectbox(
+                "Origem do jogador",
+                ["-"],
+                key=f"{prefix}_roster_type_placeholder_{i}",
+                disabled=True,
+            )
+
         with c3:
             selected_asset = (
-                st.selectbox("Pick", options=pick_options, key=f"{prefix}_asset_pick_{i}")
+                st.selectbox(
+                    "Pick",
+                    options=pick_options,
+                    key=f"{prefix}_asset_pick_{i}",
+                )
                 if pick_options
                 else st.selectbox(
                     "Pick",
@@ -103,8 +130,14 @@ def _render_asset_row(
                     key=f"{prefix}_asset_pick_empty_{i}",
                 )
             )
+
         with c4:
-            st.selectbox("Destino do jogador", ["-"], key=f"{prefix}_to_roster_type_placeholder_pick_{i}", disabled=True)
+            st.selectbox(
+                "Destino do jogador",
+                ["-"],
+                key=f"{prefix}_to_roster_type_placeholder_pick_{i}",
+                disabled=True,
+            )
 
     return {
         "item_id": i + 1 if side_label == "Time A" else 100 + i + 1,
@@ -138,6 +171,7 @@ def _render_side_items(
         step=1,
         key=f"{prefix}_side_count_v4",
     )
+
     side_items = []
     for i in range(int(side_count)):
         side_items.append(
@@ -172,14 +206,23 @@ def render_transactions_tab(
         with st.expander("Registrar nova transaction", expanded=False):
             tx_base_df = data.get(TX_SHEET, pd.DataFrame())
             transaction_items_df = data.get(TX_ITEMS_SHEET, pd.DataFrame())
+
             team_options = get_transaction_default_team_options(teams)
             team_name_to_id = get_team_id_map(teams)
 
-            tx_type = st.selectbox("Tipo de transaction", ["TRADE", "WAIVE", "ADD", "MOVE", "OTHER"], key="tx_type_v4")
-            tx_season = st.selectbox("Season", SEASONS, format_func=lambda x: SEASON_LABELS[x], key="tx_season_v4")
+            tx_type = st.selectbox(
+                "Tipo de transaction",
+                ["TRADE", "WAIVE", "ADD", "MOVE", "OTHER"],
+                key="tx_type_v4",
+            )
+            tx_season = st.selectbox(
+                "Season",
+                SEASONS,
+                format_func=lambda x: SEASON_LABELS[x],
+                key="tx_season_v4",
+            )
 
             show_to_team = tx_type == "TRADE"
-            show_move_mode = tx_type == "MOVE"
 
             col_a, col_b = st.columns(2)
             with col_a:
@@ -189,7 +232,12 @@ def render_transactions_tab(
                     to_team_name = st.selectbox("Time B", team_options, key="tx_to_team_v4")
                 else:
                     to_team_name = "-- Nenhum --"
-                    st.selectbox("Time B", ["-- Nenhum --"], key="tx_to_team_v4_locked", disabled=True)
+                    st.selectbox(
+                        "Time B",
+                        ["-- Nenhum --"],
+                        key="tx_to_team_v4_locked",
+                        disabled=True,
+                    )
 
             from_team_id = int(team_name_to_id[from_team_name]) if from_team_name in team_name_to_id else None
             to_team_id = int(team_name_to_id[to_team_name]) if to_team_name in team_name_to_id else None
@@ -201,20 +249,32 @@ def render_transactions_tab(
             if tx_type == "MOVE":
                 to_team_id = from_team_id
 
-            same_team = from_team_id is not None and to_team_id is not None and from_team_id == to_team_id
             if tx_type == "MOVE":
                 st.info("Movimentação interna do mesmo time: use isso para promover/demover entre MAIN e DEV.")
-            elif same_team and tx_type == "TRADE":
+            elif from_team_id is not None and to_team_id is not None and from_team_id == to_team_id and tx_type == "TRADE":
                 st.warning("TRADE precisa envolver times diferentes.")
 
             col_c, col_d, col_e = st.columns(3)
             with col_c:
                 tx_date = st.date_input("Data", key="tx_date_v4")
             with col_d:
-                initiated_by_value = str(user.get("name") or user.get("username") or user.get("email") or user) if isinstance(user, dict) else str(user)
-                initiated_by = st.text_input("Iniciado por", value=initiated_by_value, key="tx_initiated_by_v4")
+                initiated_by_value = (
+                    str(user.get("name") or user.get("username") or user.get("email") or user)
+                    if isinstance(user, dict)
+                    else str(user)
+                )
+                initiated_by = st.text_input(
+                    "Iniciado por",
+                    value=initiated_by_value,
+                    key="tx_initiated_by_v4",
+                )
             with col_e:
-                tx_status = st.selectbox("Status", ["PENDING", "APPROVED", "DONE"], index=2, key="tx_status_v4")
+                tx_status = st.selectbox(
+                    "Status",
+                    ["PENDING", "APPROVED", "DONE"],
+                    index=2,
+                    key="tx_status_v4",
+                )
 
             tx_notes = st.text_area("Observações", key="tx_notes_v4")
 
@@ -252,10 +312,10 @@ def render_transactions_tab(
                     default_count=1,
                 )
 
-                if tx_type == "TRADE":
-                    for row in to_side_items:
-                        row["from_team_id"] = to_team_id
-                        row["to_team_id"] = from_team_id
+            if tx_type == "TRADE":
+                for row in to_side_items:
+                    row["from_team_id"] = to_team_id
+                    row["to_team_id"] = from_team_id
 
             all_item_rows = from_side_items + to_side_items
             save_tx = st.button("Salvar transaction", type="primary", key="save_tx_v4")
@@ -286,9 +346,11 @@ def render_transactions_tab(
                         tx_status=tx_status,
                         tx_notes=tx_notes,
                     )
+
                     prepared_items = build_prepared_items(transaction_items_df, next_tx_id, valid_item_rows)
                     append_transaction(str(DEFAULT_FILE), tx_row, prepared_items)
                     update_rosters(str(DEFAULT_FILE), tx_row, prepared_items)
+
                     st.cache_data.clear()
                     st.success("Transaction salva e aplicada com sucesso.")
                     st.rerun()
@@ -298,30 +360,46 @@ def render_transactions_tab(
         st.info("Esse time ainda não possui transactions registradas.")
         return
 
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
-    type_options = ["Todas"] + (sorted(team_transactions_df["transaction_type"].dropna().astype(str).unique().tolist()) if "transaction_type" in team_transactions_df.columns else [])
-    status_options = ["Todos"] + (sorted(team_transactions_df["status"].dropna().astype(str).unique().tolist()) if "status" in team_transactions_df.columns else [])
-    season_options = ["Todas"] + (sorted(team_transactions_df["season"].dropna().astype(str).unique().tolist()) if "season" in team_transactions_df.columns else [])
+    with st.expander("Histórico de transactions", expanded=False):
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
 
-    with filter_col1:
-        selected_tx_type = st.selectbox("Tipo", type_options, key="tx_history_type_v4")
-    with filter_col2:
-        selected_tx_status = st.selectbox("Status", status_options, key="tx_history_status_v4")
-    with filter_col3:
-        selected_tx_season = st.selectbox("Season", season_options, key="tx_history_season_v4")
+        type_options = ["Todas"]
+        if "transaction_type" in team_transactions_df.columns:
+            type_options += sorted(team_transactions_df["transaction_type"].dropna().astype(str).unique().tolist())
 
-    filtered_tx = team_transactions_df.copy()
-    if selected_tx_type != "Todas" and "transaction_type" in filtered_tx.columns:
-        filtered_tx = filtered_tx.loc[filtered_tx["transaction_type"].astype(str) == selected_tx_type]
-    if selected_tx_status != "Todos" and "status" in filtered_tx.columns:
-        filtered_tx = filtered_tx.loc[filtered_tx["status"].astype(str) == selected_tx_status]
-    if selected_tx_season != "Todas" and "season" in filtered_tx.columns:
-        filtered_tx = filtered_tx.loc[filtered_tx["season"].astype(str) == selected_tx_season]
+        status_options = ["Todos"]
+        if "status" in team_transactions_df.columns:
+            status_options += sorted(team_transactions_df["status"].dropna().astype(str).unique().tolist())
 
-    metric_cols = st.columns(3)
-    metric_cols[0].metric("Transactions", len(filtered_tx))
-    metric_cols[1].metric("Tipos distintos", filtered_tx["transaction_type"].nunique() if "transaction_type" in filtered_tx.columns else 0)
-    metric_cols[2].metric("Seasons", filtered_tx["season"].nunique() if "season" in filtered_tx.columns else 0)
+        season_options = ["Todas"]
+        if "season" in team_transactions_df.columns:
+            season_options += sorted(team_transactions_df["season"].dropna().astype(str).unique().tolist())
 
-    display_tx = normalize_transaction_display_df(filtered_tx)
-    st.dataframe(display_tx, use_container_width=True, hide_index=True)
+        with filter_col1:
+            selected_tx_type = st.selectbox("Tipo", type_options, key="tx_history_type_v4")
+        with filter_col2:
+            selected_tx_status = st.selectbox("Status", status_options, key="tx_history_status_v4")
+        with filter_col3:
+            selected_tx_season = st.selectbox("Season", season_options, key="tx_history_season_v4")
+
+        filtered_tx = team_transactions_df.copy()
+        if selected_tx_type != "Todas" and "transaction_type" in filtered_tx.columns:
+            filtered_tx = filtered_tx.loc[filtered_tx["transaction_type"].astype(str) == selected_tx_type]
+        if selected_tx_status != "Todos" and "status" in filtered_tx.columns:
+            filtered_tx = filtered_tx.loc[filtered_tx["status"].astype(str) == selected_tx_status]
+        if selected_tx_season != "Todas" and "season" in filtered_tx.columns:
+            filtered_tx = filtered_tx.loc[filtered_tx["season"].astype(str) == selected_tx_season]
+
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Transactions", len(filtered_tx))
+        metric_cols[1].metric(
+            "Tipos distintos",
+            filtered_tx["transaction_type"].nunique() if "transaction_type" in filtered_tx.columns else 0,
+        )
+        metric_cols[2].metric(
+            "Seasons",
+            filtered_tx["season"].nunique() if "season" in filtered_tx.columns else 0,
+        )
+
+        display_tx = normalize_transaction_display_df(filtered_tx)
+        st.dataframe(display_tx, use_container_width=True, hide_index=True)
