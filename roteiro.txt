@@ -2,6 +2,17 @@
 
 readme
 
+Para importar calendario da temporada nba: gera_calendario.py (na pagina fantasy -> calendario)
+para preencher os jogos: rodar com streamlit Fantasy.py, apos atualizar credenciais da planilha e compartilhar
+Para importar jogadores da planilha da FA (lista.xlsx) - rodar import_xlsx_v5.py
+Para importar qualquer coisa para a home (nao fazer sempre) - rodar import_home.py
+Para rodar a pagina do fantasy completa: rodar com streamlit uni.py
+
+Arquivos auxiliares em app_lib
+Pagins em pages
+ 
+
+
 app_lib/auction_service.py: consultas e operações do leilão.
 
 
