@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-
+import os
 from app_lib.data_loader import load_workbook_data, SEASONS
 from app_lib.role_helpers import is_admin_user
 from app_lib.session_helpers import require_login_v5
@@ -15,10 +15,15 @@ from app_lib.transforms import SEASON_LABELS, get_team_options
 DEFAULT_FILE = Path("roster.xlsx")
 
 
-st.cache_data
-def cached_load(file_path: str):
+@st.cache_data(show_spinner=False)
+def cached_load(file_path: str, mtime: float):
     return load_workbook_data(file_path)
 
+def load_current_data():
+    if not DEFAULT_FILE.exists():
+        return None
+    mtime = os.path.getmtime(DEFAULT_FILE)
+    return cached_load(str(DEFAULT_FILE), mtime)
 
 user = require_login_v5()
 is_admin = is_admin_user(user)
@@ -34,7 +39,10 @@ if not DEFAULT_FILE.exists():
     st.stop()
 
 
-data = cached_load(str(DEFAULT_FILE))
+data = load_current_data()
+if data is None:
+    st.error("Arquivo roster.xlsx não encontrado na pasta do projeto.")
+    st.stop()
 teams = get_team_options(data["teams"])
 
 

@@ -19,10 +19,12 @@ def get_environment_label_v5():
 
 
 def startup_v5():
+    if st.session_state.get("startup_done_v5"):
+        return True, None
     try:
         healthcheck_db_v5()
         init_db_v5()
-        close_expired_bids_v5()
+        st.session_state["startup_done_v5"] = True
         return True, None
     except Exception as e:
         return False, str(e)
