@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-
 from app_lib.data_loader import load_workbook_data
 from app_lib.standings_service import build_classification_bundle
-
 
 DEFAULT_FILE = Path("roster.xlsx")
 PLAYOFF_SPOTS = 8
@@ -115,6 +112,7 @@ def render_confronto_tab(matrix_df: pd.DataFrame):
     ax.set_title("Matriz de confronto direto")
     st.pyplot(fig)
 
+
 def render_calendario_tab(schedule_check_df: pd.DataFrame, games_df: pd.DataFrame):
     st.subheader("Calendário")
     st.caption("Linha do tempo da temporada")
@@ -138,9 +136,51 @@ def render_calendario_tab(schedule_check_df: pd.DataFrame, games_df: pd.DataFram
             st.dataframe(schedule_check_df, use_container_width=True, hide_index=True)
 
 
+def render_agenda_tab(data: dict[str, pd.DataFrame]) -> None:
+    """
+    Agenda NBA por semana e por time.
+    Colunas esperadas na aba 'Semana': SEMANANUM, TEAMABBR, JOGONASEMANA, GAMEDATE
+    """
+    st.subheader("Agenda NBA")
+    st.caption("Jogos por semana e por time")
+
+    semana_df = data.get("Semana", pd.DataFrame())
+    if semana_df.empty:
+        st.info("Nenhuma agenda semanal carregada (aba 'Semana' vazia ou ausente no roster.xlsx).")
+        return
+
+    df = semana_df.copy()
+    df.columns = [str(c).strip().upper() for c in df.columns]
+
+    required = {"SEMANANUM", "TEAMABBR", "JOGONASEMANA", "GAMEDATE"}
+    if not required.issubset(set(df.columns)):
+        st.warning("Colunas necessárias não encontradas na aba 'Semana' (esperado: SEMANANUM, TEAMABBR, JOGONASEMANA, GAMEDATE).")
+        st.dataframe(df.head(), use_container_width=True, hide_index=True)
+        return
+
+    df["GAMEDATE"] = pd.to_datetime(df["GAMEDATE"], errors="coerce")
+    df = df.sort_values(["SEMANANUM", "TEAMABBR", "JOGONASEMANA", "GAMEDATE"])
+
+    weeks = df.groupby("SEMANANUM")
+
+    for semana_num, g in weeks:
+        semana_label = f"Semana {int(semana_num)}"
+        with st.expander(semana_label, expanded=False):
+            # Agrupa por time dentro da semana
+            for team, tg in g.groupby("TEAMABBR"):
+                with st.expander(f"{team}", expanded=False):
+                    show = tg[["JOGONASEMANA", "GAMEDATE"]].copy()
+                    show = show.rename(columns={
+                        "JOGONASEMANA": "Jogo_na_semana",
+                        "GAMEDATE": "Data",
+                    })
+                    show["Data"] = show["Data"].dt.date
+                    st.dataframe(show, use_container_width=True, hide_index=True)
+
+
 def main():
     st.title("Classificação")
-    st.caption("Classificação, confronto direto e calendário da temporada")
+    st.caption("Classificação, confronto direto, calendário e agenda NBA da temporada")
 
     if not DEFAULT_FILE.exists():
         st.error("Arquivo roster.xlsx nao encontrado na pasta do projeto.")
@@ -174,7 +214,7 @@ def main():
 
     bundle = build_classification_bundle(games_df, teams_df)
 
-    tabs = st.tabs(["Classificação", "Confronto direto", "Calendário"])
+    tabs = st.tabs(["Classificação", "Confronto direto", "Calendário", "Agenda NBA"])
     with tabs[0]:
         render_classificacao_principal(bundle.standings)
         render_playoffs_eliminados(bundle.standings)
@@ -182,6 +222,8 @@ def main():
         render_confronto_tab(bundle.head_to_head_matrix)
     with tabs[2]:
         render_calendario_tab(bundle.schedule_check, games_df)
+    with tabs[3]:
+        render_agenda_tab(data)
 
 
 if __name__ == "__main__":
