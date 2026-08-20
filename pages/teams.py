@@ -11,7 +11,6 @@ from app_lib.teams_ui_helpers import currency, inject_summary_card_css, render_s
 from app_lib.transactions_ui import render_transactions_tab
 from app_lib.transforms import SEASON_LABELS, get_team_options
 
-
 DEFAULT_FILE = Path("roster.xlsx")
 
 
@@ -19,11 +18,13 @@ DEFAULT_FILE = Path("roster.xlsx")
 def cached_load(file_path: str, mtime: float):
     return load_workbook_data(file_path)
 
+
 def load_current_data():
     if not DEFAULT_FILE.exists():
         return None
     mtime = os.path.getmtime(DEFAULT_FILE)
     return cached_load(str(DEFAULT_FILE), mtime)
+
 
 user = require_login_v5()
 is_admin = is_admin_user(user)
@@ -95,7 +96,7 @@ cap_status = ctx["cap_status"]
 inject_summary_card_css()
 
 
-# Cards de resumo (mantidos)
+# Cards de resumo (mantidos + novo card "Disponível")
 row1 = st.columns(3)
 with row1[0]:
     render_summary_card("Time", selected_team_name)
@@ -105,16 +106,70 @@ with row1[2]:
     render_summary_card("Jogadores DEV", len(dev_roster))
 
 
-row2 = st.columns(3)
+salarios_main = main_summary.get("Salários", 0.0)
+disponivel = 110_000_000.00 - salarios_main
+
+
+row2 = st.columns(4)
 with row2[0]:
-    render_summary_card("Salários MAIN", currency(main_summary.get("Salários", 0.0)))
+    render_summary_card("Salários MAIN", currency(salarios_main))
 with row2[1]:
     render_summary_card("Cap restante", currency(cap_remaining))
 with row2[2]:
     render_summary_card("Picks", total_picks)
+with row2[3]:
+    render_summary_card("Disponível", currency(disponivel))
 
 
 st.caption(f"Status do cap: {cap_status}")
+st.divider()
+
+
+# Busca global de jogadores (MAIN + DEV) com selectbox pesquisável
+st.subheader("Buscar jogador")
+
+# Junta roster/dev com players para trazer player_name
+roster_df = data["roster"].copy().assign(Elenco="MAIN")
+dev_df = data["development"].copy().assign(Elenco="DEV")
+players_df = data.get("players", pd.DataFrame())
+
+all_players = pd.concat([roster_df, dev_df], ignore_index=True)
+
+if not players_df.empty and "player_id" in all_players.columns and "player_id" in players_df.columns:
+    all_players = all_players.merge(
+        players_df[["player_id", "player_name"]],
+        on="player_id",
+        how="left",
+    )
+else:
+    st.warning("Aba 'players' não encontrada ou sem colunas necessárias.")
+    all_players["player_name"] = all_players["player_id"].astype(str)
+
+player_options = sorted(all_players["player_name"].dropna().unique().tolist())
+selected_player = st.selectbox(
+    "Jogador",
+    options=[""] + player_options,
+    index=0,
+    key="player_search_select",
+)
+
+if selected_player:
+    found = all_players[all_players["player_name"] == selected_player].copy()
+    if not found.empty:
+        show = found[["player_name", "team_id", "Elenco"]].copy()
+        team_lookup = ctx["team_lookup"]
+        show["Time"] = show["team_id"].map(team_lookup).fillna(show["team_id"])
+        show = show.rename(columns={
+            "player_name": "Jogador",
+            "team_id": "ID Time",
+            "Elenco": "Elenco",
+            "Time": "Time",
+        })
+        st.dataframe(show[["Jogador", "Time", "Elenco"]], use_container_width=True, hide_index=True)
+else:
+    st.caption("Selecione ou digite o nome do jogador para buscar em todos os elencos (MAIN e DEV).")
+
+
 st.divider()
 
 

@@ -1,0 +1,101 @@
+Caminho do Milho — Roteiro de Evolucoes
+
+1) Teams (Elencos)
+
+1.1) Campo "Disponivel" (110M - salarios, sem multas)
+Objetivo: mostrar quanto o time tem "livre" antes de considerar multas.
+
+Calculo:
+- Disponivel = 110_000_000.00 - Salarios_MAIN
+- Salarios_MAIN = soma dos salarios dos jogadores do elenco principal (roster), ignorando multas.
+
+Onde mexer:
+- Em teams_vf.py (ou teams.py), onde hoje voce ja calcula o resumo do time (provavelmente via teams_page_context.py e transforms.py).
+
+Entregavel:
+- Um novo card/metrica "Disponivel" ao lado de "Cap restante" e "Salarios MAIN".
+
+
+1.2) Busca global de jogadores
+Objetivo: um campo para digitar o nome do jogador e ver em qual time/elenco ele esta (MAIN/DEV).
+
+Fonte de dados:
+- data["roster"] e data["development"] (todos os jogadores dos elencos principais e desenvolvimento).
+
+Comportamento:
+- Um st.text_input("Buscar jogador").
+- Filtra a lista completa de jogadores por nome (parcial, case-insensitive).
+- Mostra tabela com:
+  - Jogador, Time, Elenco (MAIN/DEV), e eventualmente Posicao/Salario se quiser.
+
+Onde mexer:
+- Em teams_vf.py (ou teams.py), apos o carregamento de data, antes ou depois dos cards de resumo.
+
+Entregavel:
+- Um expander ou secao "Buscar jogador" na pagina de Elencos.
+
+
+2) Leilao (regras de negocio e filtros)
+
+2.1) Regras de duracao por faixa de salario
+Objetivo: travar os anos de contrato conforme o valor oferecido.
+
+Regras:
+- Salario entre 1.000.000 e 3.000.000:
+  - anos so pode ir ate 3.
+- Salario entre 3.100.000 e 9.999.999:
+  - anos so pode ir ate 4.
+- Salario entre 10.000.000 e 19.999.999:
+  - anos deve ser 2 a 4.
+- Salario >= 20.000.000:
+  - anos deve ser 3 ou 4.
+
+Onde mexer:
+- Na validacao da proposta, em auction_service.py (funcao submit_bid_v5) ou na UI de proposta (lei_vf.py / lei.py), antes de chamar submit_bid_v5.
+
+Entregavel:
+- Validacao que retorna erro claro quando anos nao estiverem conforme a faixa.
+- Opcional: ajustar o st.number_input("Anos", ...) para limitar min_value/max_value dinamicamente conforme o valor.
+
+
+2.2) Renovacao cobrindo proposta de mesmo valor -> mesma duracao
+Objetivo: quando a proposta e de renovacao e esta cobrindo outra de mesmo valor, a duracao deve ser igual a da proposta ativa.
+
+Regra:
+- Se:
+  - is_renewal == 1 (mesmo time atual),
+  - existe proposta ativa para o jogador,
+  - e amount_nova == amount_ativa,
+- Entao:
+  - anos_nova deve ser igual a anos_ativa, sem possibilidade de alteracao.
+
+Onde mexer:
+- Em auction_service.py, dentro de submit_bid_v5, logo apos identificar current_active e is_renewal.
+
+Entregavel:
+- Validacao que compara years com active_years e retorna erro se divergir.
+- Opcional: na UI, quando detectar renovacao com mesmo valor, travar o campo de anos no valor da proposta ativa.
+
+
+2.3) Filtros no leilao (time ativo e dono)
+Objetivo: filtrar a lista de jogadores/leilao por:
+- Time ativo (onde o jogador esta jogando atualmente).
+- Dono (quem e o "dono" atual do jogador).
+
+Onde mexer:
+- Na aba "Propostas" do leilao (lei_vf.py / lei.py), onde hoje voce ja filtra por posicao e status.
+
+Entregavel:
+- Dois st.selectbox:
+  - "Time ativo" (opcoes: todos + lista de times).
+  - "Dono" (opcoes: todos + lista de donos).
+- Aplicar esses filtros no DataFrame de jogadores antes de exibir.
+
+
+Proximos passos sugeridos
+
+1. Confirmar se voce quer que eu comece por:
+   - (A) Teams: "Disponivel" + busca de jogadores; ou
+   - (B) Leilao: regras de duracao + renovacao + filtros.
+2. Eu implemento um bloco de cada vez e te devolvo o arquivo pronto para colar.
+3. Sempre que quiser mudar de frente ou priorizar algo diferente, so dizer "caminho do milho" e o que quer atacar primeiro.

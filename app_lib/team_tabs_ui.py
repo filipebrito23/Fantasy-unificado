@@ -67,7 +67,7 @@ def render_main_tab(page_context: dict) -> None:
 
     with st.expander("Totalizadores do elenco principal", expanded=False):
         main_totals_display = main_totals.copy()
-        for col in ["Salários", "Multas", "Cap restante"]:
+        for col in ["Salários", "Multas", "Disponível", "Cap restante"]:
             if col in main_totals_display.columns:
                 main_totals_display[col] = main_totals_display[col].apply(currency)
         st.dataframe(main_totals_display, use_container_width=True, hide_index=True)
@@ -99,7 +99,7 @@ def render_dev_tab(page_context: dict) -> None:
 
     with st.expander("Totalizadores de desenvolvimento", expanded=False):
         dev_totals_display = dev_totals.copy()
-        for col in ["Salários", "Cap restante"]:
+        for col in ["Salários", "Multas","Cap restante"]:
             if col in dev_totals_display.columns:
                 dev_totals_display[col] = dev_totals_display[col].apply(currency)
         st.dataframe(dev_totals_display, use_container_width=True, hide_index=True)
