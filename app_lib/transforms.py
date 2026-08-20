@@ -203,7 +203,8 @@ def calculate_main_totals(main_roster_df: pd.DataFrame, fines_df: pd.DataFrame, 
         total_salary = float(main_roster_df[sal_col].fillna(0).sum()) if sal_col in main_roster_df.columns else 0.0
         total_fine = float(fines_row.get(fine_col, 0.0))
         cap_space = 110_000_000 - total_salary - total_fine
-        rows.append({"Temporada": SEASON_LABELS[season], "Salários": total_salary, "Multas": total_fine, "Cap restante": cap_space})
+        disponivel = 110_000_000 - total_salary
+        rows.append({"Temporada": SEASON_LABELS[season], "Salários": total_salary, "Multas": total_fine, "Disponível": disponivel, "Cap restante": cap_space})
     return pd.DataFrame(rows)
 
 

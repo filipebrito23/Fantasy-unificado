@@ -47,13 +47,14 @@ def render_main_tab(page_context: dict) -> None:
     visible_seasons = page_context["visible_seasons"]
     main_positions_text = page_context["main_positions_text"]
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4,c5 = st.columns(5)
     if not main_totals.empty:
         current_main = main_totals.iloc[0].to_dict()
         c1.metric("Jogadores", len(main_roster))
         c2.metric("Salários", currency(current_main.get("Salários", 0.0)))
         c3.metric("Multas", currency(current_main.get("Multas", 0.0)))
-        c4.metric("Cap restante", currency(current_main.get("Cap restante", 0.0)))
+        c4.metric("Disponível", currency(current_main.get("Disponível", 0.0)))
+        c5.metric("Cap restante", currency(current_main.get("Cap restante", 0.0)))
 
     st.caption(f"Posições: {main_positions_text}")
 
