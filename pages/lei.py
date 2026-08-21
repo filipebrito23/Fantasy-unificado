@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app_lib.auth_v5 import authenticate_user_v5, change_password_v5, create_user_v5, get_all_users_v5
 from app_lib.auction_formatters import format_remaining, formatar_brl, valor_por_extenso
 from app_lib.auction_service import (
+    _contract_year_limits,
     close_expired_bids_v5,
     delete_bid_v5,
     get_all_bids_v5,
@@ -69,7 +70,7 @@ def filter_players(df: pd.DataFrame, status_filter: str) -> pd.DataFrame:
 
 
 def render_login():
-    st.title("Leilão NBA Fantasy v5")
+    st.title("Leilão NBA Fantasy")
     st.subheader("Login por e-mail")
     with st.form("login_form_v5"):
         email = st.text_input("E-mail")
@@ -190,11 +191,17 @@ def urgency_accent(remaining_text: str) -> tuple[str, str]:
     return "#2ca02c", "Sem urgência crítica"
 
 
-def render_players_tab(position, status_filter):
+def render_players_tab(position=None, status_filter=None):
     colors = theme_colors()
 
     st.subheader("Propostas")
     st.caption("Monitore propostas ativas, tempo restante e situação de cada jogador.")
+
+    # Valores padrão
+    if position is None:
+        position = "Todas"
+    if status_filter is None:
+        status_filter = "Todos"
 
     players = pd.DataFrame(get_players_with_state_v5(position))
     players = filter_players(players, status_filter)
@@ -266,6 +273,85 @@ def render_players_tab(position, status_filter):
                     unsafe_allow_html=True,
                 )
 
+    # Filtros: Posição, Status, Time ativo e Dono (todos abaixo de Destaques)
+    filter_row1, filter_row2 = st.columns(2), st.columns(2)
+
+    with filter_row1[0]:
+        position = st.selectbox("Posição", POSITIONS, key="auction_position_filter_v1")
+
+    with filter_row1[1]:
+        status_filter = st.selectbox("Status", STATUS_FILTERS, key="auction_status_filter_v1")
+
+    with filter_row2[0]:
+        active_team_options = ["Todos"]
+        if "time_ativo" in players.columns:
+            active_team_values = (
+                players["time_ativo"]
+                .dropna()
+                .astype(str)
+                .replace("", pd.NA)
+                .dropna()
+                .unique()
+                .tolist()
+            )
+            active_team_options += sorted(active_team_values)
+
+        selected_active_team = st.selectbox(
+            "Time ativo",
+            active_team_options,
+            key="auction_active_team_filter_v1",
+        )
+
+    with filter_row2[1]:
+        owner_options = ["Todos"]
+        if "dono" in players.columns:
+            owner_values = (
+                players["dono"]
+                .dropna()
+                .astype(str)
+                .replace("", pd.NA)
+                .dropna()
+                .unique()
+                .tolist()
+            )
+            owner_options += sorted(owner_values)
+
+        selected_owner = st.selectbox(
+            "Dono",
+            owner_options,
+            key="auction_owner_filter_v1",
+        )
+
+    # Aplicar filtros (Posição, Status, Time ativo, Dono)
+    players = pd.DataFrame(get_players_with_state_v5(position))
+    players = filter_players(players, status_filter)
+
+    if players.empty:
+        st.info("Nenhum jogador encontrado para os filtros atuais.")
+        return
+
+    filtered_players = players.copy()
+
+    if selected_active_team != "Todos" and "time_ativo" in filtered_players.columns:
+        filtered_players = filtered_players[
+            filtered_players["time_ativo"].fillna("").astype(str) == selected_active_team
+        ]
+
+    if selected_owner != "Todos" and "dono" in filtered_players.columns:
+        filtered_players = filtered_players[
+            filtered_players["dono"].fillna("").astype(str) == selected_owner
+        ]
+
+    if filtered_players.empty:
+        st.info("Nenhum jogador encontrado com esses filtros.")
+        return
+
+    players = filtered_players
+
+    players["tempo_restante"] = players["expires_at"].apply(format_remaining)
+    players["tipo"] = players["is_renewal"].apply(lambda x: "Renovação" if x == 1 else "Oferta")
+    players["valor_fmt"] = players["proposta_ativa"].apply(lambda x: formatar_brl(float(x)) if pd.notna(x) else "-")
+
     st.markdown("### Lista de propostas")
     cols = ["player_name", "position", "dono", "time_ativo", "valor_fmt", "anos", "tempo_restante", "tipo", "status"]
     st.dataframe(players[cols], use_container_width=True, hide_index=True)
@@ -285,7 +371,6 @@ def render_players_tab(position, status_filter):
         history["ativa"] = history["is_active"].apply(lambda x: "Sim" if x == 1 else "Não")
         cols_h = ["bid_id", "team_name", "amount", "years", "created_at", "updated_at", "deleted_at", "delete_reason", "tipo", "ativa", "created_by"]
         st.dataframe(history[cols_h], use_container_width=True, hide_index=True)
-
 
 def render_bid_form_tab(user):
     colors = theme_colors()
@@ -352,8 +437,60 @@ def render_bid_form_tab(user):
         team_id = user["team_id"]
         st.text_input("Time", value=user.get("team_name", ""), disabled=True)
 
-    amount = st.number_input("Valor da proposta", min_value=1000000.0, step=100000.0, key="amount_preview_v5", format="%.2f")
-    years = st.number_input("Anos", min_value=1, max_value=4, step=1)
+    # Determinar se é renovação
+    owner_team_id = selected_row.get("owner_team_id")
+    is_renewal_preview = (
+        owner_team_id is not None
+        and team_id is not None
+        and int(owner_team_id) == int(team_id)
+    )
+
+    # Buscar proposta ativa atual do jogador
+    player_history = pd.DataFrame(get_bid_history_v5(int(player_id)))
+    current_active_amount = None
+    current_active_years = None
+
+    if not player_history.empty:
+        active_preview = player_history[player_history["is_active"] == 1]
+        if not active_preview.empty:
+            active_row = active_preview.iloc[0]
+            current_active_amount = float(active_row["amount"])
+            current_active_years = int(active_row["years"])
+
+    amount = st.number_input(
+        "Valor da proposta",
+        min_value=1_000_000.0,
+        step=100_000.0,
+        key="amount_preview_v5",
+        format="%.2f",
+    )
+
+    # Limites de anos por faixa salarial
+    years_limits = _contract_year_limits(amount)
+
+    if years_limits is None:
+        min_years = 1
+        max_years = 4
+    else:
+        min_years, max_years = years_limits
+
+    # Regra: renovação cobrindo proposta de mesmo valor → mesmos anos
+    if (
+        is_renewal_preview
+        and current_active_amount is not None
+        and abs(amount - current_active_amount) < 0.01
+        and current_active_years is not None
+    ):
+        min_years = current_active_years
+        max_years = current_active_years
+
+    years = st.number_input(
+        "Anos",
+        min_value=min_years,
+        max_value=max_years,
+        value=min_years,
+        step=1,
+    )
 
     c5, c6 = st.columns(2)
     with c5:
@@ -377,7 +514,6 @@ def render_bid_form_tab(user):
             st.rerun()
         else:
             st.error(msg)
-
 
 def render_cap_tab():
     st.subheader("Cap")
@@ -523,12 +659,7 @@ def main():
     main_tab, bid_tab, cap_tab, admin_tab, profile_tab = st.tabs(["Propostas", "Nova proposta", "Cap", "Admin", "Perfil"])
 
     with main_tab:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            position = st.selectbox("Posição", POSITIONS)
-        with col2:
-            status_filter = st.selectbox("Status", STATUS_FILTERS)
-        render_players_tab(position, status_filter)
+        render_players_tab()
 
     with bid_tab:
         render_bid_form_tab(user)
