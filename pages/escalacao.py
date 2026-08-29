@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-
+from sqlalchemy import text
 import pandas as pd
 import streamlit as st
 
@@ -184,18 +184,34 @@ def render_team_selector(user: Dict[str, Any]) -> Optional[int]:
 
     return team_options[team_name]
 
+@st.cache_data(show_spinner=False)
+def get_elenco_cached(team_id: int) -> Dict[int, Dict[str, Any]]:
+    """
+    Carrega o elenco principal uma vez por time e mantém em cache.
+    Evita reler roster.xlsx e a aba players a cada selectbox.
+    """
+    return build_elenco_principal_dict(team_id)
 
 def render_lineup_form(team_id: int, user: Dict[str, Any]):
     """
-    Renderiza o formulário de escalação para um time específico.
+    Renderiza a escalação dentro de um único formulário.
+
+    Benefícios:
+    - Não há refresh a cada jogador selecionado.
+    - As opções são filtradas somente pela posição compatível.
+    - Regras de repetição são avaliadas apenas quando o usuário salva.
+    - Limpar e Carregar recriam os widgets com valores corretos.
     """
     if not can_edit_team(team_id, user):
         st.warning("Você não tem permissão para editar este time.")
         return
 
-    # Carrega escalação atual (se existir)
-    current_lineup = load_lineup(team_id)
     metadata = get_lineup_metadata(team_id)
+    elenco = get_elenco_cached(team_id)
+
+    if not elenco:
+        st.warning("Este time não possui jogadores no elenco principal.")
+        return
 
     st.subheader("Escalação")
 
@@ -203,166 +219,232 @@ def render_lineup_form(team_id: int, user: Dict[str, Any]):
         updated_at = metadata.get("updated_at")
         updated_by_email = metadata.get("updated_by_email")
         st.caption(
-            f"Última atualização: {updated_at} por {updated_by_email or 'desconhecido'}"
+            f"Última atualização: {updated_at} por "
+            f"{updated_by_email or 'desconhecido'}"
         )
     else:
         st.caption("Nenhuma escalação salva ainda.")
 
-    # Inicializa estado da escalação no session_state
+    # Estado de trabalho: a escalação que será exibida/alterada no formulário.
     if "escalacao_lineup_state" not in st.session_state:
         st.session_state.escalacao_lineup_state = {}
 
-    # Se mudou de time, reseta o estado
-    last_team = st.session_state.get("escalacao_last_team_id")
-    if last_team != team_id:
-        st.session_state.escalacao_last_team_id = team_id
-        st.session_state.escalacao_lineup_state = {}
+    # Essa versão muda nos comandos Limpar e Carregar.
+    # Com isso, os widgets ganham novas keys e são reconstruídos de verdade.
+    if "escalacao_form_version" not in st.session_state:
+        st.session_state.escalacao_form_version = 0
 
-    # Inicializa slots vazios se necessário
+    last_team = st.session_state.get("escalacao_last_team_id")
+
+    # Ao trocar de time, carrega a escalação daquele time ou inicia vazia.
+    if last_team != team_id:
+        loaded_lineup = load_lineup(team_id) or {
+            slot: None for slot in ALL_SLOTS
+        }
+
+        st.session_state.escalacao_last_team_id = team_id
+        st.session_state.escalacao_lineup_state = dict(loaded_lineup)
+        st.session_state.escalacao_form_version += 1
+
+    # Garante os 12 slots no estado.
     for slot in ALL_SLOTS:
         if slot not in st.session_state.escalacao_lineup_state:
-            st.session_state.escalacao_lineup_state[slot] = (
-                current_lineup.get(slot) if current_lineup else None
-            )
+            st.session_state.escalacao_lineup_state[slot] = None
 
-    # Usa o estado ATUAL (session_state) para calcular opções, não só o current_lineup
-    current_lineup_effective = dict(st.session_state.escalacao_lineup_state)
+    # Mapa pronto para os 12 selects. Cada posição usa apenas o slot-base:
+    # PG_RES usa PG; 6TH_RES usa 6TH.
+    options_by_slot: Dict[str, List[int]] = {}
+    label_by_player: Dict[int, str] = {}
 
-    # Seção de titulares
-    st.markdown("### Titulares")
-    titular_cols = st.columns(3)
+    for pid, info in elenco.items():
+        label_by_player[int(pid)] = (
+            f"{info['nome']} ({info['position_canonical']})"
+        )
 
-    for idx, slot in enumerate(SLOTS_TITULAR):
-        col = titular_cols[idx % 3]
-        with col:
-            label = slot.replace("6TH", "6th").capitalize()
-            options = build_player_options(team_id, current_lineup_effective, slot)
+    for slot in ALL_SLOTS:
+        base_slot = slot.replace("_RES", "")
 
-            # Mapeia player_id -> label para o selectbox
-            opt_map = {o["player_id"]: o["label"] for o in options if not o["disabled"]}
-            current_pid = st.session_state.escalacao_lineup_state.get(slot)
+        eligible_ids = [
+            int(pid)
+            for pid, info in elenco.items()
+            if base_slot in info.get("allowed_slots", set())
+        ]
 
-            # Se o valor atual não está nas opções, reseta
-            if current_pid is not None and current_pid not in opt_map:
-                current_pid = None
-                st.session_state.escalacao_lineup_state[slot] = None
+        eligible_ids.sort(
+            key=lambda pid: label_by_player[pid].casefold()
+        )
 
-            selected = col.selectbox(
-                label,
-                options=list(opt_map.values()),
-                index=(
-                    list(opt_map.values()).index(opt_map[current_pid])
-                    if current_pid is not None and current_pid in opt_map
-                    else 0
-                )
-                if opt_map
-                else 0,
-                key=f"escalacao_slot_{slot}",
-            )
+        # None é a primeira opção para que nenhum jogador seja pré-selecionado.
+        options_by_slot[slot] = [None] + eligible_ids
 
-            # Atualiza estado
-            reverse_map = {v: k for k, v in opt_map.items()}
-            st.session_state.escalacao_lineup_state[slot] = reverse_map.get(selected)
+    # A versão faz Limpar e Carregar funcionarem de forma consistente.
+    version = st.session_state.escalacao_form_version
 
-    # Seção de reservas
-    st.markdown("### Reservas")
-    reserva_cols = st.columns(3)
+    # Os comandos ficam fora do form porque atualizam os valores exibidos.
+    action_col1, action_col2, action_col3 = st.columns([2, 1, 1])
 
-    for idx, slot in enumerate(SLOTS_RESERVA):
-        col = reserva_cols[idx % 3]
-        with col:
-            base = slot.replace("_RES", "")
-            label = f"{base.replace('6TH', '6th').capitalize()} Reserva"
-            options = build_player_options(team_id, current_lineup_effective, slot)
+    with action_col2:
+        clear_clicked = st.button(
+            "Limpar",
+            key=f"escalacao_clear_{team_id}",
+        )
 
-            opt_map = {o["player_id"]: o["label"] for o in options if not o["disabled"]}
-            current_pid = st.session_state.escalacao_lineup_state.get(slot)
+    with action_col3:
+        load_clicked = st.button(
+            "Carregar escalação atual",
+            key=f"escalacao_load_{team_id}",
+        )
 
-            if current_pid is not None and current_pid not in opt_map:
-                current_pid = None
-                st.session_state.escalacao_lineup_state[slot] = None
+    if clear_clicked:
+        st.session_state.escalacao_lineup_state = {
+            slot: None for slot in ALL_SLOTS
+        }
+        st.session_state.escalacao_form_version += 1
+        st.rerun()
 
-            selected = col.selectbox(
-                label,
-                options=list(opt_map.values()),
-                index=(
-                    list(opt_map.values()).index(opt_map[current_pid])
-                    if current_pid is not None and current_pid in opt_map
-                    else 0
-                )
-                if opt_map
-                else 0,
-                key=f"escalacao_slot_{slot}",
-            )
+    if load_clicked:
+        saved_lineup = load_lineup(team_id)
 
-            reverse_map = {v: k for k, v in opt_map.items()}
-            st.session_state.escalacao_lineup_state[slot] = reverse_map.get(selected)
-
-    # Botões de ação
-    st.divider()
-
-    btn_col1, btn_col2, btn_col3 = st.columns([2, 1, 1])
-
-    with btn_col1:
-        if st.button("Salvar escalação", type="primary", key="escalacao_save_btn"):
-            lineup_dict = dict(st.session_state.escalacao_lineup_state)
-
-            # Verifica se todos os slots estão preenchidos
-            missing = [s for s, v in lineup_dict.items() if v is None]
-            if missing:
-                st.error(f"Preencha todos os slots. Faltam: {', '.join(missing)}")
-            else:
-                ok, errors = save_lineup(
-                    team_id=team_id,
-                    lineup_dict=lineup_dict,  # type: ignore[arg-type]
-                    user_id=user["user_id"],
-                )
-                if ok:
-                    st.success("Escalação salva com sucesso!")
-
-                    for slot in ALL_SLOTS:
-                        st.session_state.escalacao_lineup_state[slot] = None
-
-                        widget_key = f"escalacao_slot_{slot}"
-                        if widget_key in st.session_state:
-                            del st.session_state[widget_key]
-
-                    st.rerun()
-                else:
-                    for err in errors:
-                        st.error(err)
-
-    with btn_col2:
-        if st.button("Limpar", key="escalacao_clear_btn"):
-            for slot in ALL_SLOTS:
-                st.session_state.escalacao_lineup_state[slot] = None
-
-                widget_key = f"escalacao_slot_{slot}"
-                if widget_key in st.session_state:
-                    del st.session_state[widget_key]
-
+        if saved_lineup:
+            st.session_state.escalacao_lineup_state = {
+                slot: saved_lineup.get(slot)
+                for slot in ALL_SLOTS
+            }
+            st.session_state.escalacao_form_version += 1
             st.rerun()
+        else:
+            st.info("Nenhuma escalação salva para este time.")
 
-    with btn_col3:
-        if st.button("Carregar escalação atual", key="escalacao_load_btn"):
-            current = load_lineup(team_id)
+    # Form único: nenhuma escolha individual faz refresh.
+    with st.form(
+        key=f"escalacao_form_{team_id}_{version}",
+        clear_on_submit=False,
+    ):
+        st.markdown("### Titulares")
 
-            if current:
-                st.session_state.escalacao_lineup_state = dict(current)
+        titular_cols = st.columns(3)
+        selected_lineup: Dict[str, Optional[int]] = {}
 
-                # Remove o estado antigo dos widgets.
-                # Assim, os selectboxes serão renderizados novamente
-                # usando os valores carregados acima.
-                for slot in ALL_SLOTS:
-                    widget_key = f"escalacao_slot_{slot}"
-                    if widget_key in st.session_state:
-                        del st.session_state[widget_key]
+        for index, slot in enumerate(SLOTS_TITULAR):
+            with titular_cols[index % 3]:
+                title = "6th" if slot == "6TH" else slot
 
-                st.success("Escalação atual carregada.")
-                st.rerun()
-            else:
-                st.info("Nenhuma escalação salva para este time.")
+                current_value = st.session_state.escalacao_lineup_state.get(slot)
+                slot_options = options_by_slot[slot]
 
+                if current_value not in slot_options:
+                    current_value = None
+
+                selected_lineup[slot] = st.selectbox(
+                    title,
+                    options=slot_options,
+                    index=slot_options.index(current_value),
+                    format_func=lambda pid: (
+                        "Selecione um jogador"
+                        if pid is None
+                        else label_by_player[pid]
+                    ),
+                    key=f"escalacao_widget_{team_id}_{version}_{slot}",
+                )
+
+        st.markdown("### Reservas")
+
+        reserva_cols = st.columns(3)
+
+        for index, slot in enumerate(SLOTS_RESERVA):
+            with reserva_cols[index % 3]:
+                base_slot = slot.replace("_RES", "")
+                title = "6th Reserva" if base_slot == "6TH" else f"{base_slot} Reserva"
+
+                current_value = st.session_state.escalacao_lineup_state.get(slot)
+                slot_options = options_by_slot[slot]
+
+                if current_value not in slot_options:
+                    current_value = None
+
+                selected_lineup[slot] = st.selectbox(
+                    title,
+                    options=slot_options,
+                    index=slot_options.index(current_value),
+                    format_func=lambda pid: (
+                        "Selecione um jogador"
+                        if pid is None
+                        else label_by_player[pid]
+                    ),
+                    key=f"escalacao_widget_{team_id}_{version}_{slot}",
+                )
+
+        st.divider()
+
+        save_clicked = st.form_submit_button(
+            "Salvar escalação",
+            type="primary",
+            use_container_width=True,
+        )
+
+    # Só depois do submit o Streamlit processa a escalação inteira.
+    if not save_clicked:
+        return
+
+    st.session_state.escalacao_lineup_state = dict(selected_lineup)
+
+    missing_slots = [
+        slot
+        for slot in ALL_SLOTS
+        if selected_lineup.get(slot) is None
+    ]
+
+    if missing_slots:
+        labels = {
+            "PG": "PG Titular",
+            "SG": "SG Titular",
+            "SF": "SF Titular",
+            "PF": "PF Titular",
+            "C": "C Titular",
+            "6TH": "6th Titular",
+            "PG_RES": "PG Reserva",
+            "SG_RES": "SG Reserva",
+            "SF_RES": "SF Reserva",
+            "PF_RES": "PF Reserva",
+            "C_RES": "C Reserva",
+            "6TH_RES": "6th Reserva",
+        }
+
+        missing_labels = [
+            labels.get(slot, slot)
+            for slot in missing_slots
+        ]
+
+        st.error(
+            "Preencha todos os slots antes de salvar: "
+            + ", ".join(missing_labels)
+        )
+        return
+
+    lineup_to_save = {
+        slot: int(player_id)
+        for slot, player_id in selected_lineup.items()
+        if player_id is not None
+    }
+
+    ok, errors = save_lineup(
+        team_id=team_id,
+        lineup_dict=lineup_to_save,
+        user_id=user["user_id"],
+    )
+
+    if not ok:
+        st.error("A escalação não pôde ser salva. Corrija os itens abaixo:")
+        for error in errors:
+            st.error(f"• {error}")
+        return
+
+    st.success("Escalação salva com sucesso.")
+
+    # Atualiza o estado com o que foi salvo e recria o form.
+    st.session_state.escalacao_lineup_state = dict(lineup_to_save)
+    st.session_state.escalacao_form_version += 1
+    st.rerun()
 
 def render_export_tab():
     """
