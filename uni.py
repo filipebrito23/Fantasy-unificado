@@ -58,10 +58,11 @@ if user.get("must_change_password") == 1:
 
 pg = st.navigation(
     [
-        st.Page("pages/home.py", title="Home"),
-        st.Page("pages/teams.py", title="Elencos"),
-        st.Page("pages/lei.py", title="Leilão"),
-        st.Page("pages/classificacao.py", title="Classificação"),
+        st.Page("pages/home.py", title="Home", icon="🏠"),
+        st.Page("pages/teams.py", title="Elencos", icon="👥"),
+        st.Page("pages/lei.py", title="Leilão", icon="💰"),
+        st.Page("pages/classificacao.py", title="Classificação", icon="🏆"),
+        st.Page("pages/escalacao.py", title="Escalação", icon="📋"),
     ]
 )
 
