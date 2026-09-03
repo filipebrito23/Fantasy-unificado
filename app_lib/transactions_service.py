@@ -233,165 +233,412 @@ def append_transaction(file_path: str, tx_row: dict, item_rows: list[dict]):
 
 def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
     wb = load_workbook(file_path)
+
     roster_df = load_sheet_df(wb, "roster")
     dev_df = load_sheet_df(wb, "development")
     picks_df = load_sheet_df(wb, "picks")
 
-    tx_type = str(tx_row.get("transaction_type", tx_row.get("transactiontype", ""))).strip().upper()
-    from_team_id = _to_int(tx_row.get("from_team_id", tx_row.get("fromteamid")))
-    to_team_id = _to_int(tx_row.get("to_team_id", tx_row.get("toteamid")))
+    tx_type = str(
+        tx_row.get(
+            "transaction_type",
+            tx_row.get("transactiontype", ""),
+        )
+    ).strip().upper()
+
+    default_from_team_id = _to_int(
+        tx_row.get(
+            "from_team_id",
+            tx_row.get("fromteamid"),
+        )
+    )
+
+    default_to_team_id = _to_int(
+        tx_row.get(
+            "to_team_id",
+            tx_row.get("toteamid"),
+        )
+    )
 
     def num(series):
         return pd.to_numeric(series, errors="coerce")
 
+    def pick_id_key(value):
+        """
+        Normaliza ID de pick para comparação.
+
+        Exemplos tratados como equivalentes:
+        P2026R1T05
+        P2026_R1_T5
+        p2026-r1-t05
+        """
+        if value is None or pd.isna(value):
+            return ""
+
+        return (
+            str(value)
+            .strip()
+            .upper()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+        )
+
     for item in item_rows:
-        item_type = str(_item_value(item, "item_type", "itemtype", default="")).strip().lower()
+        item_type = str(
+            _item_value(
+                item,
+                "item_type",
+                "itemtype",
+                default="",
+            )
+        ).strip().lower()
+
         asset_id = _item_value(item, "asset_id", "assetid")
-        item_from_team = _to_int(_item_value(item, "from_team_id", "fromteamid", default=from_team_id))
-        item_to_team = _to_int(_item_value(item, "to_team_id", "toteamid", default=to_team_id))
 
-        if item_type == "player":
-            pid = _to_int(asset_id)
-            if pid is None:
-                continue
+        item_from_team = _to_int(
+            _item_value(
+                item,
+                "from_team_id",
+                "fromteamid",
+                default=default_from_team_id,
+            )
+        )
 
-            from_rt = _normalize_roster_type(_item_value(item, "from_roster_type", "fromrostertype"))
-            to_rt = _normalize_roster_type(_item_value(item, "to_roster_type", "torostertype"))
+        item_to_team = _to_int(
+            _item_value(
+                item,
+                "to_team_id",
+                "toteamid",
+                default=default_to_team_id,
+            )
+        )
 
-            
-
-            if tx_type == "TRADE":
-                if item_from_team is None or item_to_team is None:
-                    continue
-
-                if to_rt not in {"MAIN", "DEV"}:
-                    to_rt = "MAIN"
-
-                source_df = roster_df
-                target_df = roster_df if to_rt == "MAIN" else dev_df
-
-                if source_df.empty or not {"team_id", "player_id"}.issubset(source_df.columns):
-                    continue
-
-                source_mask = num(source_df["team_id"]).eq(item_from_team) & num(source_df["player_id"]).eq(pid)
-
-                if not source_mask.any():
-                    print(f"TRADE REMOVE DEBUG: não encontrou player {pid} no roster do time {item_from_team}")
-                    continue
-
-                moved = source_df.loc[source_mask].copy()
-                roster_df = source_df.loc[~source_mask].copy()
-                moved.loc[:, "team_id"] = item_to_team
-
-                if to_rt == "MAIN":
-                    roster_df = pd.concat([roster_df, moved], ignore_index=True)
-                else:
-                    dev_df = pd.concat([dev_df, moved], ignore_index=True)
-
-                continue
-
+        # ---------------------------------------------------------
+        # PICKS
+        # ---------------------------------------------------------
+        if item_type == "pick":
+            # Picks não se aplicam a dispensa.
             if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
-                if from_team_id is None:
-                    continue
-                if from_rt == "MAIN" and not roster_df.empty:
-                    mask = num(roster_df["team_id"]).eq(from_team_id) & num(roster_df["player_id"]).eq(pid)
-                    roster_df = roster_df.loc[~mask].copy()
-                elif from_rt == "DEV" and not dev_df.empty:
-                    mask = num(dev_df["team_id"]).eq(from_team_id) & num(dev_df["player_id"]).eq(pid)
-                    dev_df = dev_df.loc[~mask].copy()
                 continue
 
-            if tx_type in {"ADD", "SIGN", "ASSINATURA"}:
-                if item_from_team is None or item_to_team is None:
-                    continue
+            # Picks não podem ser movimentadas entre MAIN e DEV.
+            if tx_type in {
+                "MOVE",
+                "CALLUP",
+                "SENDDOWN",
+                "PROMOTION",
+            }:
+                continue
 
-                source_df = roster_df if from_rt == "MAIN" else dev_df
-                target_df = roster_df if to_rt == "MAIN" else dev_df
+            # Para uma trade, a pick precisa sair de um time e ir para outro.
+            if item_from_team is None or item_to_team is None:
+                print(
+                    "PICK UPDATE DEBUG: origem ou destino inválido. "
+                    f"pick={asset_id}; from={item_from_team}; "
+                    f"to={item_to_team}"
+                )
+                continue
 
-                if source_df.empty or not {"team_id", "player_id"}.issubset(source_df.columns):
-                    continue
+            if picks_df.empty:
+                print(
+                    "PICK UPDATE DEBUG: aba picks está vazia. "
+                    f"pick={asset_id}"
+                )
+                continue
 
-                mask = num(source_df["team_id"]).eq(item_from_team) & num(source_df["player_id"]).eq(pid)
-                if not mask.any():
-                    continue
+            required_pick_columns = {
+                "pick_id",
+                "current_team_owner_id",
+            }
 
-                moving_rows = source_df.loc[mask].copy()
-                source_df = source_df.loc[~mask].copy()
+            if not required_pick_columns.issubset(picks_df.columns):
+                print(
+                    "PICK UPDATE DEBUG: colunas obrigatórias "
+                    "não encontradas na aba picks. "
+                    f"Colunas atuais: {list(picks_df.columns)}"
+                )
+                continue
 
-                moving_rows.loc[:, "team_id"] = item_to_team
-                target_df = pd.concat([target_df, moving_rows], ignore_index=True)
+            wanted_pick_key = pick_id_key(asset_id)
 
-                if from_rt == "MAIN":
-                    roster_df = source_df
+            if not wanted_pick_key:
+                print("PICK UPDATE DEBUG: pick_id inválido.")
+                continue
+
+            current_owner_ids = pd.to_numeric(
+                picks_df["current_team_owner_id"],
+                errors="coerce",
+            )
+
+            pick_keys = picks_df["pick_id"].apply(pick_id_key)
+
+            mask = (
+                pick_keys.eq(wanted_pick_key)
+                & current_owner_ids.eq(item_from_team)
+            )
+
+            if not mask.any():
+                matching_pick = pick_keys.eq(wanted_pick_key)
+
+                if matching_pick.any():
+                    owners_found = (
+                        picks_df.loc[
+                            matching_pick,
+                            "current_team_owner_id",
+                        ]
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+
+                    print(
+                        "PICK UPDATE DEBUG: a pick existe, mas "
+                        "não pertence ao time de origem informado. "
+                        f"pick={asset_id}; "
+                        f"origem_esperada={item_from_team}; "
+                        f"donos_encontrados={owners_found}"
+                    )
                 else:
-                    dev_df = source_df
-
-                if to_rt == "MAIN":
-                    roster_df = target_df
-                else:
-                    dev_df = target_df
+                    print(
+                        "PICK UPDATE DEBUG: pick não encontrada. "
+                        f"pick={asset_id}; "
+                        f"chave_normalizada={wanted_pick_key}"
+                    )
 
                 continue
 
-            if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"}:
-                if from_rt not in {"MAIN", "DEV"} or to_rt not in {"MAIN", "DEV"}:
-                    continue
-                if item_from_team is None or item_to_team is None:
-                    continue
+            picks_df.loc[
+                mask,
+                "current_team_owner_id",
+            ] = int(item_to_team)
 
-                source_df = roster_df if from_rt == "MAIN" else dev_df
-                target_df = roster_df if to_rt == "MAIN" else dev_df
+            print(
+                "PICK UPDATE DEBUG: propriedade atualizada. "
+                f"pick={asset_id}; "
+                f"{item_from_team} -> {item_to_team}"
+            )
 
-                if source_df.empty or not {"team_id", "player_id"}.issubset(source_df.columns):
-                    continue
+            # Não deixa a lógica de jogador processar uma pick.
+            continue
 
-                source_mask = num(source_df["team_id"]).eq(item_from_team) & num(source_df["player_id"]).eq(pid)
-                if not source_mask.any():
-                    continue
+        # ---------------------------------------------------------
+        # JOGADORES
+        # ---------------------------------------------------------
+        if item_type != "player":
+            continue
 
-                moving_rows = source_df.loc[source_mask].copy()
-                source_df = source_df.loc[~source_mask].copy()
+        pid = _to_int(asset_id)
 
-                moving_rows.loc[:, "team_id"] = item_to_team
-                target_df = pd.concat([target_df, moving_rows], ignore_index=True)
+        if pid is None:
+            print(
+                "PLAYER UPDATE DEBUG: player_id inválido. "
+                f"asset={asset_id}"
+            )
+            continue
 
-                if from_rt == "MAIN":
-                    roster_df = source_df
-                else:
-                    dev_df = source_df
+        from_rt = _normalize_roster_type(
+            _item_value(
+                item,
+                "from_roster_type",
+                "fromrostertype",
+            )
+        )
 
-                if to_rt == "MAIN":
-                    roster_df = target_df
-                else:
-                    dev_df = target_df
+        to_rt = _normalize_roster_type(
+            _item_value(
+                item,
+                "to_roster_type",
+                "torostertype",
+            )
+        )
 
+        # ---------------------------------------------------------
+        # TRADE: jogador sai do MAIN da origem e entra no destino.
+        # Caso to_roster_type esteja vazio, o destino padrão é MAIN.
+        # ---------------------------------------------------------
+        if tx_type == "TRADE":
+            if item_from_team is None or item_to_team is None:
+                continue
+
+            if to_rt not in {"MAIN", "DEV"}:
+                to_rt = "MAIN"
+
+            source_df = roster_df if from_rt != "DEV" else dev_df
+
+            if source_df.empty or not {
+                "team_id",
+                "player_id",
+            }.issubset(source_df.columns):
+                print(
+                    "TRADE REMOVE DEBUG: fonte de jogador inválida. "
+                    f"player={pid}; origem={item_from_team}; "
+                    f"roster={from_rt}"
+                )
+                continue
+
+            source_mask = (
+                num(source_df["team_id"]).eq(item_from_team)
+                & num(source_df["player_id"]).eq(pid)
+            )
+
+            if not source_mask.any():
+                print(
+                    "TRADE REMOVE DEBUG: não encontrou "
+                    f"player {pid} no {from_rt or 'MAIN'} "
+                    f"do time {item_from_team}"
+                )
+                continue
+
+            moved = source_df.loc[source_mask].copy()
+            source_df = source_df.loc[~source_mask].copy()
+
+            moved.loc[:, "team_id"] = item_to_team
+
+            if from_rt == "DEV":
+                dev_df = source_df
+            else:
+                roster_df = source_df
+
+            if to_rt == "DEV":
+                dev_df = pd.concat(
+                    [dev_df, moved],
+                    ignore_index=True,
+                )
+            else:
+                roster_df = pd.concat(
+                    [roster_df, moved],
+                    ignore_index=True,
+                )
+
+            continue
+
+        # ---------------------------------------------------------
+        # WAIVE: remove do roster correspondente.
+        # ---------------------------------------------------------
+        if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
+            if item_from_team is None:
+                continue
+
+            if from_rt == "DEV" and not dev_df.empty:
+                mask = (
+                    num(dev_df["team_id"]).eq(item_from_team)
+                    & num(dev_df["player_id"]).eq(pid)
+                )
+                dev_df = dev_df.loc[~mask].copy()
+            elif not roster_df.empty:
+                mask = (
+                    num(roster_df["team_id"]).eq(item_from_team)
+                    & num(roster_df["player_id"]).eq(pid)
+                )
+                roster_df = roster_df.loc[~mask].copy()
+
+            continue
+
+        # ---------------------------------------------------------
+        # ADD / SIGN: mantém a lógica existente de mover jogador.
+        # ---------------------------------------------------------
+        if tx_type in {"ADD", "SIGN", "ASSINATURA"}:
+            if item_from_team is None or item_to_team is None:
+                continue
+
+            source_df = dev_df if from_rt == "DEV" else roster_df
+            target_df = dev_df if to_rt == "DEV" else roster_df
+
+            if source_df.empty or not {
+                "team_id",
+                "player_id",
+            }.issubset(source_df.columns):
+                continue
+
+            source_mask = (
+                num(source_df["team_id"]).eq(item_from_team)
+                & num(source_df["player_id"]).eq(pid)
+            )
+
+            if not source_mask.any():
+                continue
+
+            moved = source_df.loc[source_mask].copy()
+            source_df = source_df.loc[~source_mask].copy()
+
+            moved.loc[:, "team_id"] = item_to_team
+            target_df = pd.concat(
+                [target_df, moved],
+                ignore_index=True,
+            )
+
+            if from_rt == "DEV":
+                dev_df = source_df
+            else:
+                roster_df = source_df
+
+            if to_rt == "DEV":
+                dev_df = target_df
+            else:
+                roster_df = target_df
+
+            continue
+
+        # ---------------------------------------------------------
+        # MOVE / CALLUP / SENDDOWN / PROMOTION:
+        # movimenta jogador entre MAIN e DEV dentro do mesmo time.
+        # ---------------------------------------------------------
+        if tx_type in {
+            "MOVE",
+            "CALLUP",
+            "SENDDOWN",
+            "PROMOTION",
+        }:
             if (
-                "pick_id" not in picks_df.columns
-                or "current_team_owner_id" not in picks_df.columns
+                from_rt not in {"MAIN", "DEV"}
+                or to_rt not in {"MAIN", "DEV"}
                 or item_from_team is None
                 or item_to_team is None
             ):
                 continue
 
-            id_col = "pick_id"
-            owner_col = "current_team_owner_id"
+            source_df = dev_df if from_rt == "DEV" else roster_df
+            target_df = dev_df if to_rt == "DEV" else roster_df
 
-            owner_ids = pd.to_numeric(
-                picks_df[owner_col],
-                errors="coerce",
-            )
-
-            if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
+            if source_df.empty or not {
+                "team_id",
+                "player_id",
+            }.issubset(source_df.columns):
                 continue
 
-            mask = picks_df[id_col].astype(str).eq(str(asset_id)) & owner_ids.eq(item_from_team)
-            picks_df.loc[mask, owner_col] = item_to_team
+            source_mask = (
+                num(source_df["team_id"]).eq(item_from_team)
+                & num(source_df["player_id"]).eq(pid)
+            )
+
+            if not source_mask.any():
+                continue
+
+            moved = source_df.loc[source_mask].copy()
+            source_df = source_df.loc[~source_mask].copy()
+
+            moved.loc[:, "team_id"] = item_to_team
+
+            target_df = pd.concat(
+                [target_df, moved],
+                ignore_index=True,
+            )
+
+            if from_rt == "DEV":
+                dev_df = source_df
+            else:
+                roster_df = source_df
+
+            if to_rt == "DEV":
+                dev_df = target_df
+            else:
+                roster_df = target_df
 
     save_sheet_df(wb, "roster", roster_df)
     save_sheet_df(wb, "development", dev_df)
     save_sheet_df(wb, "picks", picks_df)
-    wb.save(file_path)
 
+    wb.save(file_path)
 
 
 def compact_columns(df: pd.DataFrame) -> pd.DataFrame:
