@@ -56,17 +56,37 @@ def roster_domain_ids(data, team_id: int, roster_type: str | None = None) -> set
 
 
 def pick_domain_ids(data, team_id: int) -> set:
+    """
+    Retorna as picks que pertencem ATUALMENTE ao time.
+
+    A regra oficial é sempre baseada em current_team_owner_id.
+    Não usa original_team_pick_id, pois a pick pode ter sido adquirida
+    em uma troca e, mesmo assim, deve aparecer para o dono atual.
+    """
     picks = data.get("picks", pd.DataFrame())
+
     if picks.empty:
         return set()
-    owner_cols = [c for c in picks.columns if "owner" in c.lower() or "team" in c.lower()]
-    if not owner_cols:
+
+    required_columns = {"pick_id", "current_team_owner_id"}
+
+    if not required_columns.issubset(picks.columns):
         return set()
-    owner_col = owner_cols[0]
-    id_col = picks.columns[0]
-    owner_ids = pd.to_numeric(picks[owner_col], errors="coerce")
-    valid_mask = owner_ids.notna() & owner_ids.eq(team_id)
-    return set(picks.loc[valid_mask, id_col].dropna().astype(str).tolist())
+
+    owner_ids = pd.to_numeric(
+        picks["current_team_owner_id"],
+        errors="coerce",
+    )
+
+    valid_mask = owner_ids.notna() & owner_ids.eq(int(team_id))
+
+    return set(
+        picks.loc[valid_mask, "pick_id"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .tolist()
+    )
 
 
 
@@ -345,14 +365,21 @@ def update_rosters(file_path: str, tx_row: dict, item_rows: list[dict]):
                 else:
                     dev_df = target_df
 
-        elif item_type == "pick" and not picks_df.empty:
-            id_col = picks_df.columns[0]
-            owner_cols = [c for c in picks_df.columns if "owner" in c.lower() or "team" in c.lower()]
-            if not owner_cols or item_from_team is None or item_to_team is None:
+            if (
+                "pick_id" not in picks_df.columns
+                or "current_team_owner_id" not in picks_df.columns
+                or item_from_team is None
+                or item_to_team is None
+            ):
                 continue
 
-            owner_col = owner_cols[0]
-            owner_ids = pd.to_numeric(picks_df[owner_col], errors="coerce")
+            id_col = "pick_id"
+            owner_col = "current_team_owner_id"
+
+            owner_ids = pd.to_numeric(
+                picks_df[owner_col],
+                errors="coerce",
+            )
 
             if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
                 continue
@@ -375,53 +402,249 @@ def compact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-def build_transactions_history(tx_df: pd.DataFrame, items_df: pd.DataFrame, selected_team_id: int, team_lookup: dict, player_lookup: dict) -> pd.DataFrame:
+def build_transactions_history(
+    tx_df: pd.DataFrame,
+    items_df: pd.DataFrame,
+    selected_team_id: int,
+    team_lookup: dict,
+    player_lookup: dict,
+) -> pd.DataFrame:
+    """
+    Monta o histórico de transactions de um time, ligando cada
+    transaction aos seus itens por transaction_id.
+
+    A função normaliza IDs como 58, 58.0 e "58" para o mesmo formato,
+    evitando que itens fiquem desconectados da transaction.
+    """
     if tx_df is None or tx_df.empty:
         return pd.DataFrame()
+
+    def normalize_transaction_id(value) -> str | None:
+        if value is None or pd.isna(value):
+            return None
+
+        try:
+            return str(int(float(value)))
+        except (TypeError, ValueError):
+            text_value = str(value).strip()
+            return text_value if text_value else None
+
+    def normalize_team_id(value) -> int | None:
+        if value is None or pd.isna(value):
+            return None
+
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
     tx = compact_columns(tx_df)
-    items = items_df.copy() if items_df is not None else pd.DataFrame()
-    if not items.empty:
-        items = compact_columns(items)
+    items = (
+        compact_columns(items_df)
+        if items_df is not None and not items_df.empty
+        else pd.DataFrame()
+    )
+
     tx = tx.loc[:, ~tx.columns.duplicated()].copy()
-    if not items.empty:
-        items = items.loc[:, ~items.columns.duplicated()].copy()
-    if not {"fromteamid", "toteamid"}.issubset(tx.columns):
+
+    required_tx_columns = {
+        "transactionid",
+        "fromteamid",
+        "toteamid",
+    }
+
+    if not required_tx_columns.issubset(tx.columns):
         return pd.DataFrame()
-    team_mask = tx["fromteamid"].astype(str).eq(str(selected_team_id)) | tx["toteamid"].astype(str).eq(str(selected_team_id))
-    tx = tx.loc[team_mask].copy()
+
+    selected_team_id = int(selected_team_id)
+
+    tx["__transaction_key__"] = tx["transactionid"].apply(
+        normalize_transaction_id
+    )
+    tx["__from_team_id__"] = tx["fromteamid"].apply(
+        normalize_team_id
+    )
+    tx["__to_team_id__"] = tx["toteamid"].apply(
+        normalize_team_id
+    )
+
+    tx = tx.loc[
+        tx["__from_team_id__"].eq(selected_team_id)
+        | tx["__to_team_id__"].eq(selected_team_id)
+    ].copy()
+
     if tx.empty:
         return pd.DataFrame()
-    tx["from_team"] = tx["fromteamid"].map(team_lookup).fillna(tx["fromteamid"])
-    tx["to_team"] = tx["toteamid"].map(team_lookup).fillna(tx["toteamid"])
-    if items.empty or "transactionid" not in items.columns:
-        tx["items_summary"] = "-"
-    else:
-        items = items.loc[items["transactionid"].astype(str).isin(tx["transactionid"].astype(str))].copy()
 
-        def describe_item(row):
-            item_type = str(row.get("itemtype", "")).upper()
-            asset_id = row.get("assetid")
-            if item_type == "PLAYER":
-                pid = _to_int(asset_id)
-                asset_label = player_lookup.get(pid, asset_id)
+    tx["from_team"] = tx["__from_team_id__"].map(team_lookup).fillna(
+        tx["fromteamid"]
+    )
+    tx["to_team"] = tx["__to_team_id__"].map(team_lookup).fillna(
+        tx["toteamid"]
+    )
+
+    items_by_transaction: dict[str, list[dict]] = {}
+
+    if not items.empty and "transactionid" in items.columns:
+        items = items.copy()
+
+        items["__transaction_key__"] = items["transactionid"].apply(
+            normalize_transaction_id
+        )
+        items["__from_team_id__"] = items["fromteamid"].apply(
+            normalize_team_id
+        )
+        items["__to_team_id__"] = items["toteamid"].apply(
+            normalize_team_id
+        )
+
+        valid_transaction_keys = set(
+            tx["__transaction_key__"].dropna().tolist()
+        )
+
+        items = items.loc[
+            items["__transaction_key__"].isin(valid_transaction_keys)
+        ].copy()
+
+        for _, item in items.iterrows():
+            transaction_key = item.get("__transaction_key__")
+
+            if not transaction_key:
+                continue
+
+            item_type = str(
+                item.get("itemtype", "")
+            ).strip().lower()
+
+            asset_id = item.get("assetid")
+
+            from_team_id = item.get("__from_team_id__")
+            to_team_id = item.get("__to_team_id__")
+
+            from_roster_type = str(
+                item.get("fromrostertype", "") or ""
+            ).strip().upper()
+
+            to_roster_type = str(
+                item.get("torostertype", "") or ""
+            ).strip().upper()
+
+            if item_type == "player":
+                player_id = normalize_team_id(asset_id)
+
+                if player_id is None:
+                    asset_label = str(asset_id)
+                else:
+                    asset_label = player_lookup.get(
+                        player_id,
+                        f"Jogador #{player_id}",
+                    )
+
+            elif item_type == "pick":
+                asset_label = str(asset_id).strip()
+
             else:
-                asset_label = asset_id
-            from_rt = row.get("fromrostertype")
-            to_rt = row.get("torostertype")
-            roster_part = ""
-            if pd.notna(from_rt) or pd.notna(to_rt):
-                roster_part = f" ({from_rt or '-'} → {to_rt or '-'})"
-            return f"{item_type}: {asset_label}{roster_part}"
+                asset_label = str(asset_id).strip()
 
-        items["item_desc"] = items.apply(describe_item, axis=1)
-        items_grouped = items.groupby("transactionid", as_index=False)["item_desc"].apply(lambda s: " | ".join(s.astype(str)))
-        tx = tx.merge(items_grouped, on="transactionid", how="left")
-        tx = tx.rename(columns={"item_desc": "items_summary"})
-    tx = tx.rename(columns={"transactionid": "transaction_id", "transactiontype": "transaction_type", "transactiondate": "transaction_date", "initiatedby": "initiated_by"})
+            roster_label = ""
+
+            if from_roster_type or to_roster_type:
+                roster_label = (
+                    f" [{from_roster_type or '-'}"
+                    f" → {to_roster_type or '-'}]"
+                )
+
+            items_by_transaction.setdefault(
+                str(transaction_key),
+                [],
+            ).append(
+                {
+                    "from_team_id": from_team_id,
+                    "to_team_id": to_team_id,
+                    "label": f"{asset_label}{roster_label}",
+                }
+            )
+
+    sent_values: list[str] = []
+    received_values: list[str] = []
+    all_items_values: list[str] = []
+
+    for _, tx_row in tx.iterrows():
+        transaction_key = tx_row.get("__transaction_key__")
+        transaction_items = items_by_transaction.get(
+            str(transaction_key),
+            [],
+        )
+
+        sent_items = [
+            item["label"]
+            for item in transaction_items
+            if item.get("from_team_id") == selected_team_id
+        ]
+
+        received_items = [
+            item["label"]
+            for item in transaction_items
+            if item.get("to_team_id") == selected_team_id
+        ]
+
+        all_items = [
+            item["label"]
+            for item in transaction_items
+        ]
+
+        sent_values.append(
+            " | ".join(sent_items) if sent_items else "-"
+        )
+        received_values.append(
+            " | ".join(received_items) if received_items else "-"
+        )
+        all_items_values.append(
+            " | ".join(all_items) if all_items else "-"
+        )
+
+    tx["enviado"] = sent_values
+    tx["recebido"] = received_values
+    tx["itens"] = all_items_values
+
+    tx = tx.rename(
+        columns={
+            "transactionid": "transaction_id",
+            "transactiontype": "transaction_type",
+            "transactiondate": "transaction_date",
+            "initiatedby": "initiated_by",
+        }
+    )
+
     tx = tx.loc[:, ~tx.columns.duplicated()].copy()
-    preferred_cols = ["transaction_id", "transaction_date", "transaction_type", "season", "from_team", "to_team", "initiated_by", "status", "items_summary", "notes"]
-    existing_cols = [c for c in preferred_cols if c in tx.columns]
-    sort_cols = [c for c in ["transaction_date", "transaction_id"] if c in tx.columns]
-    if sort_cols:
-        tx = tx.sort_values(by=sort_cols, ascending=False)
-    return tx[existing_cols]
+
+    preferred_columns = [
+        "transaction_date",
+        "season",
+        "from_team",
+        "to_team",
+        "enviado",
+        "recebido",
+        "notes",
+    ]
+
+    existing_columns = [
+        column
+        for column in preferred_columns
+        if column in tx.columns
+    ]
+
+    sort_columns = [
+        column
+        for column in ["transaction_date", "transaction_id"]
+        if column in tx.columns
+    ]
+
+    if sort_columns:
+        tx = tx.sort_values(
+            by=sort_columns,
+            ascending=False,
+            kind="stable",
+        )
+
+    return tx[existing_columns].reset_index(drop=True)
