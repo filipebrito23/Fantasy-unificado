@@ -34,7 +34,7 @@ def _prepare_main_display(df: pd.DataFrame) -> pd.DataFrame:
 
 def _compact_team_columns(df: pd.DataFrame) -> dict:
     return {
-        "Ordem": st.column_config.NumberColumn("Ordem", width="small", format="%d"),
+        "Ordem": None,
         "Jogador": st.column_config.TextColumn("Jogador", width="small"),
         "Posição": st.column_config.TextColumn("Posição", width="small"),
     }
@@ -62,7 +62,14 @@ def render_main_tab(page_context: dict) -> None:
         display_main,
         use_container_width=True,
         hide_index=True,
-        column_order=get_roster_column_order(display_main, visible_seasons),
+        column_order=[
+            col
+            for col in get_roster_column_order(
+                display_main,
+                visible_seasons,
+            )
+            if col != "Ordem"
+        ],
         column_config={**_compact_team_columns(display_main), **get_roster_column_config(visible_seasons)},
     )
 
@@ -94,7 +101,14 @@ def render_dev_tab(page_context: dict) -> None:
         display_dev,
         use_container_width=True,
         hide_index=True,
-        column_order=get_roster_column_order(display_dev, visible_seasons),
+        column_order=[
+            col
+            for col in get_roster_column_order(
+                display_dev,
+                visible_seasons,
+            )
+            if col != "Ordem"
+        ],
         column_config={**_compact_team_columns(display_dev), **get_roster_column_config(visible_seasons)},
     )
 
