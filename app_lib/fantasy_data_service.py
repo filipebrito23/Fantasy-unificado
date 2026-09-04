@@ -302,3 +302,10 @@ def get_neon_data_counts() -> dict[str, int]:
         name: int(len(df))
         for name, df in data.items()
     }
+
+def get_neon_connection():
+    """
+    Retorna uma conexão bruta do SQLAlchemy para operações
+    que precisam de transação manual (INSERT/UPDATE/DELETE).
+    """
+    return engine.begin()

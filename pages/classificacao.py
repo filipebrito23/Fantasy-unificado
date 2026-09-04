@@ -1,22 +1,24 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from app_lib.data_loader import load_workbook_data
+from app_lib.fantasy_data_service import load_fantasy_data_from_neon
 from app_lib.standings_service import build_classification_bundle
 
-DEFAULT_FILE = Path("roster.xlsx")
 PLAYOFF_SPOTS = 8
 ELIMINATED_SPOTS = 6
 
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_load():
+    """
+    Carrega a base de Classificação a partir do Neon.
 
-@st.cache_data
-def cached_load(file_path: str):
-    return load_workbook_data(file_path)
+    Retorna o mesmo contrato antes obtido de load_workbook_data('roster.xlsx'):
+    data["teams"], data["games"], etc.
+    """
+    return load_fantasy_data_from_neon()
 
 
 def add_status(df: pd.DataFrame) -> pd.DataFrame:
@@ -179,23 +181,41 @@ def render_agenda_tab(data: dict[str, pd.DataFrame]) -> None:
 
 
 def main():
-    st.title("Classificação")
-    st.caption("Classificação, confronto direto, calendário e agenda NBA da temporada")
+    st.title("Classificacao")
+    st.caption("Classificacao, confronto direto e calendario da temporada")
 
-    if not DEFAULT_FILE.exists():
-        st.error("Arquivo roster.xlsx nao encontrado na pasta do projeto.")
-        st.stop()
+    data = cached_load()
 
-    data = cached_load(str(DEFAULT_FILE))
-    if "games" not in data:
-        st.error("A aba 'games' nao foi encontrada no roster.xlsx.")
-        st.stop()
-    if "teams" not in data:
-        st.error("A aba 'teams' nao foi encontrada no roster.xlsx.")
-        st.stop()
+    # A função load_fantasy_data_from_neon já retorna as chaves "games" e "teams"
+    # no mesmo formato antes obtido via load_workbook_data('roster.xlsx').
+    games_df = data.get("games", pd.DataFrame())
+    teams_df = data.get("teams", pd.DataFrame())
 
-    games_df = data["games"].copy()
-    teams_df = data["teams"].copy()
+    if games_df.empty:
+        st.info("Nenhum jogo encontrado na base de Classificação.")
+        # Ainda permitimos mostrar a tabela de times vazia ou com 0 vitórias/derrotas
+    bundle = build_classification_bundle(games_df, teams_df)
+
+    tabs = st.tabs([
+        "Classificacao",
+        "Confronto direto",
+        "Calendario",
+        "Agenda NBA",
+    ])
+
+    with tabs[0]:
+        render_classificacao_principal(bundle.standings)
+        render_playoffs_eliminados(bundle.standings)
+
+    with tabs[1]:
+        render_confronto_tab(bundle.head_to_head_matrix)
+
+    with tabs[2]:
+        render_calendario_tab(bundle.schedule_check, games_df)
+
+    with tabs[3]:
+        render_agenda_tab(data)
+        return
 
     required_cols = {
         "id_jogo",
@@ -205,16 +225,17 @@ def main():
         "pontos_time_2",
         "id_time_2",
         "nome_time_2",
-        "rodada"
+        "rodada",
     }
+
     missing_cols = required_cols - set(games_df.columns)
     if missing_cols:
-        st.error(f"Colunas ausentes na aba games: {', '.join(sorted(missing_cols))}")
+        st.error(f"Colunas ausentes na base de jogos: {', '.join(sorted(missing_cols))}")
         st.stop()
 
     bundle = build_classification_bundle(games_df, teams_df)
 
-    tabs = st.tabs(["Classificação", "Confronto direto", "Calendário", "Agenda NBA"])
+    tabs = st.tabs(["Classificacao", "Confronto direto", "Calendario"])
     with tabs[0]:
         render_classificacao_principal(bundle.standings)
         render_playoffs_eliminados(bundle.standings)
@@ -222,8 +243,6 @@ def main():
         render_confronto_tab(bundle.head_to_head_matrix)
     with tabs[2]:
         render_calendario_tab(bundle.schedule_check, games_df)
-    with tabs[3]:
-        render_agenda_tab(data)
 
 
 if __name__ == "__main__":

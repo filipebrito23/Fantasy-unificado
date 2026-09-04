@@ -42,17 +42,32 @@ def build_games_long(games_df: pd.DataFrame) -> pd.DataFrame:
 def head_to_head_record(games_df: pd.DataFrame, team_a: int, team_b: int) -> tuple[int, int]:
     if games_df.empty:
         return (0, 0)
-    subset = games_df[((games_df["id_time_1"] == team_a) & (games_df["id_time_2"] == team_b)) | ((games_df["id_time_1"] == team_b) & (games_df["id_time_2"] == team_a))].copy()
+
+    subset = games_df[
+        (
+            ((games_df["id_time_1"] == team_a) & (games_df["id_time_2"] == team_b))
+            | ((games_df["id_time_1"] == team_b) & (games_df["id_time_2"] == team_a))
+        )
+        & games_df["pontos_time_1"].notna()
+        & games_df["pontos_time_2"].notna()
+    ].copy()
+
     wins_a = wins_b = 0
     for _, row in subset.iterrows():
         if row["id_time_1"] == team_a:
             pts_a, pts_b = row["pontos_time_1"], row["pontos_time_2"]
         else:
             pts_a, pts_b = row["pontos_time_2"], row["pontos_time_1"]
+
+        # Garante que os pontos são numéricos antes de comparar
+        if pts_a is None or pts_b is None:
+            continue
+
         if pts_a > pts_b:
             wins_a += 1
         elif pts_b > pts_a:
             wins_b += 1
+
     return wins_a, wins_b
 
 
