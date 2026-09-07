@@ -1,0 +1,4 @@
+rodar - import_only_stats
+depois roda todas as sql run_all e 02_example
+se precisar deletar, so delete
+se precisar rodar siglas novmaente
