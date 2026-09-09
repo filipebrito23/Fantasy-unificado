@@ -2,3 +2,9 @@ rodar - import_only_stats
 depois roda todas as sql run_all e 02_example
 se precisar deletar, so delete
 se precisar rodar siglas novmaente
+1. Preencher a planilha
+2. Rodar import_only_stats.py
+3. Rodar run_all_features.sql
+3. Rodar recalculate_efficiency.sql
+4. Rodar recalculate_ratings.sql
+5. Recarregar o Streamlit
