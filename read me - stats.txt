@@ -1,4 +1,20 @@
+Fluxo 
+
+1. Preencher a planilha
+2. Rodar import_only_stats.py
+3. Rodar recalculate_efficiency.sql
+4. Rodar recalculate_ratings.sql
+5. Recarregar o Streamlit
+
+
+
 rodar - import_only_stats
 depois roda todas as sql run_all e 02_example
 se precisar deletar, so delete
 se precisar rodar siglas novmaente
+
+
+
+Proximas etapas:
+
+- utilizar desvio-padrao na feature 2 como grafico, para avaliar o quanto o jogador oscila.

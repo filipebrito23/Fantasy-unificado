@@ -64,6 +64,7 @@ pg = st.navigation(
         st.Page("pages/classificacao.py", title="Classificação", icon="🏆"),
         st.Page("pages/escalacao.py", title="Escalação", icon="📋"),
         st.Page("pages/estatisticas.py", title="Estatísticas", icon="📊"),
+        st.Page("pages/ratings.py", title="Desempenho", icon="⭐"),
     ]
 )
 
