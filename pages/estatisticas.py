@@ -20,10 +20,21 @@ from app_lib.statistics_service import (
 
 st.set_page_config(page_title="Estatísticas", layout="wide")
 
+METRIC_LABELS = {
+    "pts": "PTS",
+    "reb": "REB",
+    "ast": "AST",
+    "stl": "STL",
+    "blk": "BLK",
+    "three_pt": "3PT",
+    "turnovers": "TO",
+    "efficiency": "Eficiência",
+}
+
 
 def _format_currency(value) -> str:
     if value is None or pd.isna(value):
-        return "â§»"
+        return "—"
     return (
         f"R$ {float(value):,.0f}"
         .replace(",", "X")
@@ -34,7 +45,7 @@ def _format_currency(value) -> str:
 
 def _format_number(value, digits: int = 2) -> str:
     if value is None or pd.isna(value):
-        return "â§»"
+        return "—"
     return f"{float(value):,.{digits}f}".replace(".", ",")
 
 
@@ -76,9 +87,9 @@ def _player_table(df: pd.DataFrame) -> pd.DataFrame:
             "avg_three_pt": "3PT",
             "avg_turnovers": "TO",
             "avg_efficiency": "Eficiência",
-            "avg_pts_last_4": "PTS Últ. 4",
-            "avg_pts_last_8": "PTS Últ. 8",
-            "avg_pts_last_12": "PTS Últ. 12",
+            "avg_pts_last_4": "PTS últ. 4",
+            "avg_pts_last_8": "PTS últ. 8",
+            "avg_pts_last_12": "PTS últ. 12",
             "efficiency_per_million": "Eficiência / R$ 1 mi",
         }
     )
@@ -259,7 +270,7 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         total_games = int(filtered_df["games_played"].sum())
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            _safe_metric("Jogadores com stats", len(filtered_df), 0)
+            _safe_metric("Jogadores com estatísticas", len(filtered_df), 0)
         with c2:
             _safe_metric("Registros de jogos", total_games, 0)
         with c3:
@@ -285,9 +296,9 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         return
 
     player = filtered_df.iloc[0]
-    st.markdown(f"#### {player['player_name']} {player['team_name']}")
+    st.markdown(f"#### {player['player_name']} — {player['team_name']}")
     st.caption(
-        f"PosiÃ§Ã£o: {player['position'] or '»'} \xb7 "
+        f"Posição: {player['position'] or '—'} · "
         f"Rodadas registradas: {player['first_round']} a {player['last_round']}"
     )
 
@@ -299,7 +310,7 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
     with c3:
         _safe_metric("Eficiência média", player["avg_efficiency"])
     with c4:
-        _safe_metric("PTS Últimas 4", player["avg_pts_last_4"])
+        _safe_metric("PTS últimas 4", player["avg_pts_last_4"])
     with c5:
         _safe_metric(
             "Eficiência / R$ 1 mi",
@@ -309,12 +320,12 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        _safe_metric("PTS Últimas 8", player["avg_pts_last_8"])
+        _safe_metric("PTS últimas 8", player["avg_pts_last_8"])
     with c2:
-        _safe_metric("PTS Últimas 12", player["avg_pts_last_12"])
+        _safe_metric("PTS últimas 12", player["avg_pts_last_12"])
     with c3:
         st.metric(
-            "Salário 2026-27",
+            "Salário 2026–27",
             _format_currency(player["current_salary"]),
         )
     with c4:
@@ -335,7 +346,9 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
     ).T.rename(columns={0: "Média"})
     st.dataframe(averages, use_container_width=True, hide_index=True)
 
-    st.markdown("#### Histórico por rodada")
+    st.divider()
+    st.subheader("Histórico por rodada")
+
     game_log = get_player_game_log(
         int(player["source_player_id"]),
         int(player["team_id"]),
@@ -343,31 +356,36 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
     if game_log.empty:
         st.info("Não há partidas registradas para este jogador.")
     else:
+        metric = st.selectbox(
+            "Métrica",
+            list(METRIC_LABELS.keys()),
+            format_func=lambda value: METRIC_LABELS[value],
+            key="player_history_metric",
+        )
         st.caption(
-            "Evolução dos pontos e da eficiência do jogador nas rodadas importadas."
+            f"Evolução de {METRIC_LABELS[metric]} do jogador nas rodadas importadas."
         )
-        st.line_chart(
-            game_log.set_index("round")[["pts", "efficiency"]],
-            use_container_width=True,
-        )
+
+        # Preparar dados: garantir round inteiro e único por rodada
+        plot_df = game_log.copy()
+        plot_df["round"] = plot_df["round"].astype(int)
+        plot_df = plot_df.sort_values("round").groupby("round").first().reset_index()
+        plot_df = plot_df.set_index("round")[[metric]]
+
+        st.line_chart(plot_df, width="stretch")
         st.dataframe(game_log, use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("Consistência do jogador")
+    st.caption(
+        "Desvio-padrão amostral mede a variabilidade do desempenho entre jogos. "
+        "Quanto menor o valor, mais consistente é o jogador naquela métrica."
+    )
 
     metric = st.selectbox(
         "Métrica",
-        ["pts", "efficiency", "reb", "ast", "stl", "blk", "three_pt", "turnovers"],
-        format_func=lambda x: {
-            "pts": "PTS",
-            "efficiency": "Eficiência",
-            "reb": "REB",
-            "ast": "AST",
-            "stl": "STL",
-            "blk": "BLK",
-            "three_pt": "3PT",
-            "turnovers": "TO",
-        }[x],
+        list(METRIC_LABELS.keys()),
+        format_func=lambda value: METRIC_LABELS[value],
         key="player_consistency_metric",
     )
 
@@ -377,8 +395,13 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         metric=metric,
     )
     if not history.empty:
-        chart_df = history.set_index("round")[["value", "running_avg", "lower_bound", "upper_bound"]]
-        st.line_chart(chart_df, use_container_width=True)
+        # Preparar dados
+        plot_df = history.copy()
+        plot_df["round"] = plot_df["round"].astype(int)
+        plot_df = plot_df.sort_values("round").groupby("round").first().reset_index()
+        plot_df = plot_df.set_index("round")[["value", "running_avg", "lower_bound", "upper_bound"]]
+
+        st.line_chart(plot_df, width="stretch")
 
         st.dataframe(
             history.rename(
@@ -423,7 +446,6 @@ def render_teams_tab(teams_df: pd.DataFrame) -> None:
         )
 
     st.markdown("#### Médias por confronto")
-    
     st.dataframe(
         _team_table(
             team_stats_df.sort_values(
@@ -498,65 +520,56 @@ def render_teams_tab(teams_df: pd.DataFrame) -> None:
     st.markdown(f"#### Histórico: {selected_team_name}")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        _safe_metric(
-            "Jogos com stats",
-            selected_team["games_with_stats"],
-            0,
-        )
+        _safe_metric("Jogos com estatísticas", selected_team["games_with_stats"], 0)
     with c2:
         _safe_metric("PTS médios", selected_team["avg_pts"])
     with c3:
-        _safe_metric(
-            "Eficiência média",
-            selected_team["avg_efficiency"],
-        )
+        _safe_metric("Eficiência média", selected_team["avg_efficiency"])
     with c4:
-        _safe_metric(
-            "Desvio-padrão de PTS",
-            selected_team["stddev_pts"],
-        )
+        _safe_metric("Desvio-padrão de PTS", selected_team["stddev_pts"])
+
+    st.divider()
+    st.subheader("Histórico por rodada")
 
     game_log = get_team_game_log(selected_team_id)
     if game_log.empty:
         st.info("Não há confrontos completos registrados para este time.")
     else:
+        metric = st.selectbox(
+            "Métrica",
+            list(METRIC_LABELS.keys()),
+            format_func=lambda value: METRIC_LABELS[value],
+            key="team_history_metric",
+        )
         st.caption(
-            "Evolução da pontuação e da eficiência do time ao longo "
-            "das rodadas importadas."
+            f"Evolução de {METRIC_LABELS[metric]} do time nas rodadas importadas."
         )
         st.line_chart(
-            game_log.set_index("round")[["pts", "efficiency"]],
+            game_log.set_index("round")[[metric]],
             use_container_width=True,
         )
         st.dataframe(game_log, use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("Consistência do time")
+    st.caption(
+        "Desvio-padrão amostral mede a variabilidade do desempenho entre jogos. "
+        "Quanto menor o valor, mais consistente é o time naquela métrica."
+    )
 
     metric = st.selectbox(
         "Métrica",
-        ["pts", "efficiency", "reb", "ast", "stl", "blk", "three_pt", "turnovers"],
-        format_func=lambda x: {
-            "pts": "PTS",
-            "efficiency": "Eficiência",
-            "reb": "REB",
-            "ast": "AST",
-            "stl": "STL",
-            "blk": "BLK",
-            "three_pt": "3PT",
-            "turnovers": "TO",
-        }[x],
+        list(METRIC_LABELS.keys()),
+        format_func=lambda value: METRIC_LABELS[value],
         key="team_consistency_metric",
     )
 
-    history = get_team_consistency_history(
-        selected_team_id,
-        metric=metric,
-    )
+    history = get_team_consistency_history(selected_team_id, metric=metric)
     if not history.empty:
-        chart_df = history.set_index("round")[["value", "running_avg", "lower_bound", "upper_bound"]]
+        chart_df = history.set_index("round")[
+            ["value", "running_avg", "lower_bound", "upper_bound"]
+        ]
         st.line_chart(chart_df, use_container_width=True)
-
         st.dataframe(
             history.rename(
                 columns={
@@ -573,9 +586,12 @@ def render_teams_tab(teams_df: pd.DataFrame) -> None:
         )
 
 
-def render_consistency_tab(teams_df: pd.DataFrame) -> None:
+def render_consistency_tab() -> None:
     st.subheader("Consistência")
-
+    st.caption(
+        "Desvio-padrão amostral para PTS, REB, AST, STL, BLK, 3PT, TO e eficiência. "
+        "Valores menores indicam maior regularidade."
+    )
 
     tab_players, tab_teams = st.tabs(["Jogadores", "Times"])
 
@@ -583,7 +599,7 @@ def render_consistency_tab(teams_df: pd.DataFrame) -> None:
         st.markdown("#### Tabela de consistência dos jogadores")
         consistency_df = get_player_consistency(min_games=2)
         if consistency_df.empty:
-            st.info("Dados insuficientes para calcular consistência dos jogadores.")
+            st.info("Dados insuficientes para calcular a consistência dos jogadores.")
         else:
             st.dataframe(
                 _consistency_player_table(
@@ -599,20 +615,10 @@ def render_consistency_tab(teams_df: pd.DataFrame) -> None:
 
         st.divider()
         st.markdown("#### Dispersão: média × consistência (jogadores)")
-
         metric = st.selectbox(
             "Métrica",
-            ["efficiency", "pts", "reb", "ast", "stl", "blk", "three_pt", "turnovers"],
-            format_func=lambda x: {
-                "efficiency": "Eficiência",
-                "pts": "PTS",
-                "reb": "REB",
-                "ast": "AST",
-                "stl": "STL",
-                "blk": "BLK",
-                "three_pt": "3PT",
-                "turnovers": "TO",
-            }[x],
+            list(METRIC_LABELS.keys()),
+            format_func=lambda value: METRIC_LABELS[value],
             key="player_scatter_metric",
         )
         min_games = st.slider(
@@ -638,14 +644,14 @@ def render_consistency_tab(teams_df: pd.DataFrame) -> None:
             st.caption(
                 "Cada ponto representa um jogador com pelo menos "
                 f"{min_games} jogos. Eixo X: média da métrica; "
-                "Eixo Y: desvio-padrão."
+                "eixo Y: desvio-padrão."
             )
 
     with tab_teams:
         st.markdown("#### Tabela de consistência dos times")
         consistency_df = get_team_consistency(min_games=2)
         if consistency_df.empty:
-            st.info("Dados insuficientes para calcular consistência dos times.")
+            st.info("Dados insuficientes para calcular a consistência dos times.")
         else:
             st.dataframe(
                 _consistency_team_table(
@@ -661,20 +667,10 @@ def render_consistency_tab(teams_df: pd.DataFrame) -> None:
 
         st.divider()
         st.markdown("#### Dispersão: média × consistência (times)")
-
         metric = st.selectbox(
             "Métrica",
-            ["efficiency", "pts", "reb", "ast", "stl", "blk", "three_pt", "turnovers"],
-            format_func=lambda x: {
-                "efficiency": "Eficiência",
-                "pts": "PTS",
-                "reb": "REB",
-                "ast": "AST",
-                "stl": "STL",
-                "blk": "BLK",
-                "three_pt": "3PT",
-                "turnovers": "TO",
-            }[x],
+            list(METRIC_LABELS.keys()),
+            format_func=lambda value: METRIC_LABELS[value],
             key="team_scatter_metric",
         )
         min_games = st.slider(
@@ -700,13 +696,13 @@ def render_consistency_tab(teams_df: pd.DataFrame) -> None:
             st.caption(
                 "Cada ponto representa um time com pelo menos "
                 f"{min_games} jogos. Eixo X: média da métrica; "
-                "Eixo Y: desvio-padrão."
+                "eixo Y: desvio-padrão."
             )
 
 
 def main() -> None:
     st.title("Estatísticas")
-    st.caption(" Estatísticas avançadas de jogadores e times")
+    st.caption("Estatísticas avançadas de jogadores e times")
 
     teams_df = get_statistics_teams()
     if teams_df.empty:
@@ -724,7 +720,7 @@ def main() -> None:
         render_teams_tab(teams_df)
 
     with tab_consistency:
-        render_consistency_tab(teams_df)
+        render_consistency_tab()
 
 
 if __name__ == "__main__":

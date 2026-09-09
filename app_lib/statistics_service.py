@@ -876,7 +876,7 @@ def get_player_consistency_scatter(
     metric: str = "efficiency",
 ) -> pd.DataFrame:
     """
-    Dispersã««o média × desvio-padrã««o para jogadores.
+    Dispersão média × desvio-padrão para jogadores.
     """
     allowed = {
         "pts",
@@ -897,13 +897,26 @@ def get_player_consistency_scatter(
         team_filter = "AND b.team_id = :team_id"
         params["team_id"] = team_id
 
+    # Calcular a métrica corretamente
+    metric_expr = f"""
+        COALESCE(
+            gs.efficiency,
+            1.5 * COALESCE(gs.pts, 0)
+            + 3.5 * COALESCE(gs.reb, 0)
+            + 4.0 * COALESCE(gs.ast, 0)
+            + 5.0 * COALESCE(gs.stl, 0)
+            + 5.0 * COALESCE(gs.blk, 0)
+            + 3.5 * COALESCE(gs.three_pt, 0)
+            - 3.5 * COALESCE(gs.turnovers, 0)
+        )""" if metric == "efficiency" else f"COALESCE(gs.{metric}, 0)"
+
     return _read_sql(
         f"""
         WITH base AS (
             SELECT
                 gs.source_player_id,
                 gs.team_id,
-                {metric} AS value
+                {metric_expr} AS value
             FROM fantasy_game_stats gs
             JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
             WHERE
