@@ -368,7 +368,9 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
 
         # Preparar dados: garantir round inteiro e único por rodada
         plot_df = game_log.copy()
-        plot_df["round"] = plot_df["round"].astype(int)
+        plot_df["round"] = pd.to_numeric(plot_df["round"], errors="coerce").astype("Int64")
+        plot_df[metric] = pd.to_numeric(plot_df[metric], errors="coerce")
+        plot_df = plot_df.dropna(subset=["round", metric])
         plot_df = plot_df.sort_values("round").groupby("round").first().reset_index()
         plot_df = plot_df.set_index("round")[[metric]]
 
@@ -397,7 +399,10 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
     if not history.empty:
         # Preparar dados
         plot_df = history.copy()
-        plot_df["round"] = plot_df["round"].astype(int)
+        plot_df["round"] = pd.to_numeric(plot_df["round"], errors="coerce").astype("Int64")
+        for col in ["value", "running_avg", "lower_bound", "upper_bound"]:
+            plot_df[col] = pd.to_numeric(plot_df[col], errors="coerce")
+        plot_df = plot_df.dropna(subset=["round", "value", "running_avg"])
         plot_df = plot_df.sort_values("round").groupby("round").first().reset_index()
         plot_df = plot_df.set_index("round")[["value", "running_avg", "lower_bound", "upper_bound"]]
 

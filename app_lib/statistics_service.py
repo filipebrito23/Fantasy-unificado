@@ -699,25 +699,28 @@ def get_player_consistency_history(
     team_id: int,
     metric: str = "pts",
 ) -> pd.DataFrame:
-    """
-    Histórico por rodada para um jogador, com:
-    - valor da métrica
-    - média acumulada até a rodada
-    - desvio-padrã««o acumulado (amostral)
-    - limites inferior e superior (mÃ©dia ± 1 DP)
-    """
     allowed = {
-        "pts",
-        "reb",
-        "ast",
-        "stl",
-        "blk",
-        "three_pt",
-        "turnovers",
-        "efficiency",
+        "pts", "reb", "ast", "stl", "blk", "three_pt", "turnovers", "efficiency"
     }
     if metric not in allowed:
         raise ValueError(f"metric must be one of {allowed}")
+
+    # Expressão para calcular a métrica corretamente
+    if metric == "efficiency":
+        metric_sql = """
+            COALESCE(
+                gs.efficiency,
+                1.5 * COALESCE(gs.pts, 0)
+                + 3.5 * COALESCE(gs.reb, 0)
+                + 4.0 * COALESCE(gs.ast, 0)
+                + 5.0 * COALESCE(gs.stl, 0)
+                + 5.0 * COALESCE(gs.blk, 0)
+                + 3.5 * COALESCE(gs.three_pt, 0)
+                - 3.5 * COALESCE(gs.turnovers, 0)
+            )
+        """
+    else:
+        metric_sql = f"COALESCE(gs.{metric}, 0)"
 
     return _read_sql(
         f"""
@@ -725,38 +728,22 @@ def get_player_consistency_history(
             SELECT
                 fg.round,
                 gs.fantasy_game_id,
-                gs.pts,
-                gs.reb,
-                gs.ast,
-                gs.stl,
-                gs.blk,
-                gs.three_pt,
-                gs.turnovers,
-                COALESCE(
-                    gs.efficiency,
-                    1.5 * COALESCE(gs.pts, 0)
-                    + 3.5 * COALESCE(gs.reb, 0)
-                    + 4.0 * COALESCE(gs.ast, 0)
-                    + 5.0 * COALESCE(gs.stl, 0)
-                    + 5.0 * COALESCE(gs.blk, 0)
-                    + 3.5 * COALESCE(gs.three_pt, 0)
-                    - 3.5 * COALESCE(gs.turnovers, 0)
-                ) AS efficiency
+                {metric_sql} AS value
             FROM fantasy_game_stats gs
             JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
             WHERE gs.source_player_id = :source_player_id
               AND gs.team_id = :team_id
-            ORDER BY fg.round, gs.fantasy_game_id
         ),
         with_stats AS (
             SELECT
                 round,
-                {metric} AS value,
-                AVG({metric}) OVER (
+                fantasy_game_id,
+                value,
+                AVG(value) OVER (
                     ORDER BY round, fantasy_game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                 ) AS running_avg,
-                STDDEV_SAMP({metric}) OVER (
+                STDDEV_SAMP(value) OVER (
                     ORDER BY round, fantasy_game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                 ) AS running_stddev
@@ -766,107 +753,80 @@ def get_player_consistency_history(
             round,
             ROUND(value::NUMERIC, 2) AS value,
             ROUND(running_avg::NUMERIC, 2) AS running_avg,
-            COALESCE(ROUND(running_stddev::NUMERIC, 2), 0) AS running_stddev,
+            ROUND(COALESCE(running_stddev, 0)::NUMERIC, 2) AS running_stddev,
             ROUND((running_avg - COALESCE(running_stddev, 0))::NUMERIC, 2) AS lower_bound,
             ROUND((running_avg + COALESCE(running_stddev, 0))::NUMERIC, 2) AS upper_bound
         FROM with_stats
         ORDER BY round, fantasy_game_id
         """,
-        {"source_player_id": source_player_id, "team_id": team_id, "metric": metric},
+        {"source_player_id": source_player_id, "team_id": team_id},
     )
 
 
-def get_team_consistency_history(
-    team_id: int,
-    metric: str = "pts",
-) -> pd.DataFrame:
-    """
-    Histórico por rodada para um time, com:
-    - valor da métrica
-    - média acumulada até a rodada
-    - desvio-padrão acumulado (amostral)
-    - limites inferior e superior (média ± 1 DP)
-    """
+def get_team_consistency_history(team_id: int, metric: str = "pts") -> pd.DataFrame:
     allowed = {
-        "pts",
-        "reb",
-        "ast",
-        "stl",
-        "blk",
-        "three_pt",
-        "turnovers",
-        "efficiency",
+        "pts", "reb", "ast", "stl", "blk", "three_pt", "turnovers", "efficiency"
     }
     if metric not in allowed:
         raise ValueError(f"metric must be one of {allowed}")
+
+    if metric == "efficiency":
+        metric_sql = """
+            SUM(
+                COALESCE(
+                    gs.efficiency,
+                    1.5 * COALESCE(gs.pts, 0)
+                    + 3.5 * COALESCE(gs.reb, 0)
+                    + 4.0 * COALESCE(gs.ast, 0)
+                    + 5.0 * COALESCE(gs.stl, 0)
+                    + 5.0 * COALESCE(gs.blk, 0)
+                    + 3.5 * COALESCE(gs.three_pt, 0)
+                    - 3.5 * COALESCE(gs.turnovers, 0)
+                )
+            )
+        """
+    else:
+        metric_sql = f"SUM(COALESCE(gs.{metric}, 0))"
 
     return _read_sql(
         f"""
         WITH per_game AS (
             SELECT
-                fg.round,
                 gs.fantasy_game_id,
                 gs.team_id,
-                SUM(COALESCE(gs.pts, 0)) AS pts,
-                SUM(COALESCE(gs.reb, 0)) AS reb,
-                SUM(COALESCE(gs.ast, 0)) AS ast,
-                SUM(COALESCE(gs.stl, 0)) AS stl,
-                SUM(COALESCE(gs.blk, 0)) AS blk,
-                SUM(COALESCE(gs.three_pt, 0)) AS three_pt,
-                SUM(COALESCE(gs.turnovers, 0)) AS turnovers,
-                SUM(
-                    COALESCE(
-                        gs.efficiency,
-                        1.5 * COALESCE(gs.pts, 0)
-                        + 3.5 * COALESCE(gs.reb, 0)
-                        + 4.0 * COALESCE(gs.ast, 0)
-                        + 5.0 * COALESCE(gs.stl, 0)
-                        + 5.0 * COALESCE(gs.blk, 0)
-                        + 3.5 * COALESCE(gs.three_pt, 0)
-                        - 3.5 * COALESCE(gs.turnovers, 0)
-                    )
-                ) AS efficiency
+                fg.round,
+                {metric_sql} AS value
             FROM fantasy_game_stats gs
             JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE
-                (
-                    COALESCE(gs.pts, 0) <> 0
-                    OR COALESCE(gs.reb, 0) <> 0
-                    OR COALESCE(gs.ast, 0) <> 0
-                    OR COALESCE(gs.stl, 0) <> 0
-                    OR COALESCE(gs.blk, 0) <> 0
-                    OR COALESCE(gs.three_pt, 0) <> 0
-                    OR COALESCE(gs.turnovers, 0) <> 0
-                )
+            WHERE gs.team_id = :team_id
             GROUP BY gs.fantasy_game_id, gs.team_id, fg.round
         ),
         with_stats AS (
             SELECT
                 round,
                 fantasy_game_id,
-                {metric} AS value,
-                AVG({metric}) OVER (
+                value,
+                AVG(value) OVER (
                     ORDER BY round, fantasy_game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                 ) AS running_avg,
-                STDDEV_SAMP({metric}) OVER (
+                STDDEV_SAMP(value) OVER (
                     ORDER BY round, fantasy_game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                 ) AS running_stddev
             FROM per_game
-            WHERE team_id = :team_id
         )
         SELECT
             round,
             ROUND(value::NUMERIC, 2) AS value,
             ROUND(running_avg::NUMERIC, 2) AS running_avg,
-            COALESCE(ROUND(running_stddev::NUMERIC, 2), 0) AS running_stddev,
+            ROUND(COALESCE(running_stddev, 0)::NUMERIC, 2) AS running_stddev,
             ROUND((running_avg - COALESCE(running_stddev, 0))::NUMERIC, 2) AS lower_bound,
             ROUND((running_avg + COALESCE(running_stddev, 0))::NUMERIC, 2) AS upper_bound
         FROM with_stats
         ORDER BY round, fantasy_game_id
         """,
-        {"team_id": team_id, "metric": metric},
+        {"team_id": team_id},
     )
 
 
