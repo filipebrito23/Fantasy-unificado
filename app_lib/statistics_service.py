@@ -180,39 +180,58 @@ def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
     )
 
 
-def get_player_game_log(source_player_id: int, team_id: int) -> pd.DataFrame:
+def get_player_game_log(
+    source_player_id: int,
+    team_id: int,
+) -> pd.DataFrame:
     return _read_sql(
         """
         SELECT
             fg.round,
             gs.fantasy_game_id,
-            gs.pts,
-            gs.reb,
-            gs.ast,
-            gs.stl,
-            gs.blk,
-            gs.three_pt,
-            gs.turnovers,
-            ROUND(
-                COALESCE(
-                    gs.efficiency,
-                    1.5 * COALESCE(gs.pts, 0)
-                    + 3.5 * COALESCE(gs.reb, 0)
-                    + 4.0 * COALESCE(gs.ast, 0)
-                    + 5.0 * COALESCE(gs.stl, 0)
-                    + 5.0 * COALESCE(gs.blk, 0)
-                    + 3.5 * COALESCE(gs.three_pt, 0)
-                    - 3.5 * COALESCE(gs.turnovers, 0)
-                ),
-                2
+            CAST(COALESCE(gs.pts, 0) AS DOUBLE PRECISION) AS pts,
+            CAST(COALESCE(gs.reb, 0) AS DOUBLE PRECISION) AS reb,
+            CAST(COALESCE(gs.ast, 0) AS DOUBLE PRECISION) AS ast,
+            CAST(COALESCE(gs.stl, 0) AS DOUBLE PRECISION) AS stl,
+            CAST(COALESCE(gs.blk, 0) AS DOUBLE PRECISION) AS blk,
+            CAST(COALESCE(gs.three_pt, 0) AS DOUBLE PRECISION) AS three_pt,
+            CAST(COALESCE(gs.turnovers, 0) AS DOUBLE PRECISION) AS turnovers,
+            CAST(
+                ROUND(
+                    COALESCE(
+                        gs.efficiency,
+                        1.5 * COALESCE(gs.pts, 0)
+                        + 3.5 * COALESCE(gs.reb, 0)
+                        + 4.0 * COALESCE(gs.ast, 0)
+                        + 5.0 * COALESCE(gs.stl, 0)
+                        + 5.0 * COALESCE(gs.blk, 0)
+                        + 3.5 * COALESCE(gs.three_pt, 0)
+                        - 3.5 * COALESCE(gs.turnovers, 0)
+                    )::NUMERIC,
+                    2
+                )
+                AS DOUBLE PRECISION
             ) AS efficiency
         FROM fantasy_game_stats gs
-        JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
+        JOIN fantasy_games fg
+            ON fg.fantasy_game_id = gs.fantasy_game_id
         WHERE gs.source_player_id = :source_player_id
           AND gs.team_id = :team_id
+          AND (
+              COALESCE(gs.pts, 0) <> 0
+              OR COALESCE(gs.reb, 0) <> 0
+              OR COALESCE(gs.ast, 0) <> 0
+              OR COALESCE(gs.stl, 0) <> 0
+              OR COALESCE(gs.blk, 0) <> 0
+              OR COALESCE(gs.three_pt, 0) <> 0
+              OR COALESCE(gs.turnovers, 0) <> 0
+          )
         ORDER BY fg.round, gs.fantasy_game_id
         """,
-        {"source_player_id": source_player_id, "team_id": team_id},
+        {
+            "source_player_id": int(source_player_id),
+            "team_id": int(team_id),
+        },
     )
 
 

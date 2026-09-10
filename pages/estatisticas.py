@@ -268,13 +268,18 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
 
     if selected_player_name == "Todos os jogadores":
         total_games = int(filtered_df["games_played"].sum())
+
         c1, c2, c3, c4 = st.columns(4)
+
         with c1:
             _safe_metric("Jogadores com estatísticas", len(filtered_df), 0)
+
         with c2:
             _safe_metric("Registros de jogos", total_games, 0)
+
         with c3:
             _safe_metric("PTS médios da liga", filtered_df["avg_pts"].mean())
+
         with c4:
             _safe_metric(
                 "Eficiência média da liga",
@@ -282,6 +287,7 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
             )
 
         st.markdown("#### Tabela completa de médias")
+
         st.dataframe(
             _player_table(
                 filtered_df.sort_values(
@@ -293,7 +299,18 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
             use_container_width=True,
             hide_index=True,
         )
-        return
+
+    else:
+        player = filtered_df.iloc[0]
+
+        st.markdown(f"#### {player['player_name']} — {player['team_name']}")
+        st.caption(
+            f"Posição: {player['position'] or '—'} · "
+            f"Rodadas registradas: {player['first_round']} a {player['last_round']}"
+        )
+
+        # Todo o bloco atual de detalhes do jogador deve ficar aqui:
+        # cards, médias por categoria, histórico e consistência.
 
     player = filtered_df.iloc[0]
     st.markdown(f"#### {player['player_name']} — {player['team_name']}")
@@ -330,7 +347,7 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         )
     with c4:
         _safe_metric("Eficiência total", player["total_efficiency"])
-
+        
     st.markdown("#### Médias por categoria")
     averages = pd.DataFrame(
         {
@@ -343,7 +360,8 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
             "TO": [player["avg_turnovers"]],
             "Eficiência": [player["avg_efficiency"]],
         }
-    ).T.rename(columns={0: "Média"})
+    ).T.rename(columns={0:"Média"})
+    
     st.dataframe(averages, use_container_width=True, hide_index=True)
 
     st.divider()
