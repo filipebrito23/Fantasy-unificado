@@ -36,32 +36,5 @@ with header_cols[2]:
 
 st.divider()
 
-# Blocos principais
-block_cols = st.columns([1.2, 1.2, 1.2])
-with block_cols[0]:
-    st.subheader("Resumo da liga")
-    st.write("Liga Fantasy no formato keeper iniciada em 2021-22.")
-    st.write("Galeria dos campeões:")
-    st.write("• Itajubá Rabbits (2021-22, 2025-26)")
-    st.write("• Alabama Black Bears (2022-23)")
-    st.write("• Las Vegas Breakers (2023-24)")
-    st.write("• Miami Barons (2024-25)")
-
-with block_cols[1]:
-    st.subheader("Atalhos")
-    shortcut_cols = st.columns(3)
-    with shortcut_cols[0]:
-        st.page_link("pages/teams.py", label="Elencos")
-    with shortcut_cols[1]:
-        st.page_link("pages/lei.py", label="Leilão")
-    with shortcut_cols[2]:
-        st.page_link("pages/classificacao.py", label="Classificação")
-
-with block_cols[2]:
-    st.subheader("Avisos")
-    st.write("• Início da FA em 14/07/2026 às 12h00")
-    st.write("• Durante a temporada regular, não esqueca de escalar seu time.")
-
-st.divider()
 
 render_home_tabs(ctx)

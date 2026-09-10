@@ -351,18 +351,34 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
     st.markdown("#### Médias por categoria")
     averages = pd.DataFrame(
         {
-            "PTS": [player["avg_pts"]],
-            "REB": [player["avg_reb"]],
-            "AST": [player["avg_ast"]],
-            "STL": [player["avg_stl"]],
-            "BLK": [player["avg_blk"]],
-            "3PT": [player["avg_three_pt"]],
-            "TO": [player["avg_turnovers"]],
-            "Eficiência": [player["avg_efficiency"]],
+            "Estimador": [
+                "PTS",
+                "REB",
+                "AST",
+                "STL",
+                "BLK",
+                "3PT",
+                "TO",
+                "Eficiência",
+            ],
+            "Média": [
+                player["avg_pts"],
+                player["avg_reb"],
+                player["avg_ast"],
+                player["avg_stl"],
+                player["avg_blk"],
+                player["avg_three_pt"],
+                player["avg_turnovers"],
+                player["avg_efficiency"],
+            ],
         }
-    ).T.rename(columns={0:"Média"})
-    
-    st.dataframe(averages, use_container_width=True, hide_index=True)
+    )
+
+    st.dataframe(
+        averages,
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.divider()
     st.subheader("Histórico por rodada")
@@ -393,7 +409,27 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         plot_df = plot_df.set_index("round")[[metric]]
 
         st.line_chart(plot_df, width="stretch")
-        st.dataframe(game_log, use_container_width=True, hide_index=True)
+        player_history_table = game_log.drop(
+        columns=["fantasy_game_id"],
+        errors="ignore",).rename(
+        columns={
+            "round": "Rodada",
+            "pts": "PTS",
+            "reb": "REB",
+            "ast": "AST",
+            "stl": "STL",
+            "blk": "BLK",
+            "three_pt": "3PT",
+            "turnovers": "TO",
+            "efficiency": "Eficiência",
+        }
+    )
+
+    st.dataframe(
+        player_history_table,
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.divider()
     st.subheader("Consistência do jogador")
@@ -424,7 +460,18 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         plot_df = plot_df.sort_values("round").groupby("round").first().reset_index()
         plot_df = plot_df.set_index("round")[["value", "running_avg", "lower_bound", "upper_bound"]]
 
-        st.line_chart(plot_df, width="stretch")
+        chart_df = history.set_index("round")[
+            ["value", "running_avg", "lower_bound", "upper_bound"]
+        ].rename(
+            columns={
+                "value": "Valor",
+                "running_avg": "Média acumulada",
+                "lower_bound": "Limite inferior",
+                "upper_bound": "Limite superior",
+            }
+        )
+
+        st.line_chart(chart_df,width="stretch",)
 
         st.dataframe(
             history.rename(
@@ -571,7 +618,28 @@ def render_teams_tab(teams_df: pd.DataFrame) -> None:
             game_log.set_index("round")[[metric]],
             use_container_width=True,
         )
-        st.dataframe(game_log, use_container_width=True, hide_index=True)
+        team_history_table = game_log.drop(
+            columns=[
+                "fantasy_game_id",
+                "opponent_team_id",
+            ],errors="ignore",).rename(
+            columns={
+                "round": "Rodada",
+                "opponent": "Adversário",
+                "pts": "PTS",
+                "reb": "REB",
+                "ast": "AST",
+                "stl": "STL",
+                "blk": "BLK",
+                "three_pt": "3PT",
+                "turnovers": "TO",
+                "efficiency": "Eficiência",
+                "category_wins": "Categorias vencidas",
+                "category_losses": "Categorias perdidas",
+            }
+        )
+
+        st.dataframe(team_history_table,use_container_width=True, hide_index=True,)
 
     st.divider()
     st.subheader("Consistência do time")
@@ -592,6 +660,16 @@ def render_teams_tab(teams_df: pd.DataFrame) -> None:
         chart_df = history.set_index("round")[
             ["value", "running_avg", "lower_bound", "upper_bound"]
         ]
+        chart_df = history.set_index("round")[
+            ["value", "running_avg", "lower_bound", "upper_bound"]
+        ].rename(
+            columns={
+                "value": "Valor",
+                "running_avg": "Média acumulada",
+                "lower_bound": "Limite inferior",
+                "upper_bound": "Limite superior",
+            }
+        )
         st.line_chart(chart_df, use_container_width=True)
         st.dataframe(
             history.rename(
