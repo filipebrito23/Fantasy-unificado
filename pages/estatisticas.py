@@ -1,8 +1,7 @@
 from __future__ import annotations
-
+import altair as alt
 import pandas as pd
 import streamlit as st
-
 from app_lib.statistics_service import (
     EFFICIENCY_FORMULA_LABEL,
     get_player_consistency,
@@ -409,6 +408,7 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         plot_df = plot_df.set_index("round")[[metric]]
 
         st.line_chart(plot_df, width="stretch")
+        
         player_history_table = game_log.drop(
         columns=["fantasy_game_id"],
         errors="ignore",).rename(

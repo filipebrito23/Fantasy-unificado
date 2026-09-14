@@ -1,14 +1,25 @@
 from __future__ import annotations
-
+import streamlit as st
 import pandas as pd
 from sqlalchemy import text
-
+from functools import wraps
+from time import perf_counter
 from app_lib.db_v5 import engine
 
 EFFICIENCY_FORMULA_LABEL = (
     "1,5×«PTS + 3,5×«REB + 4,0×«AST + 5,0×«STL + 5,0×«BLK + 3,5×«3PT − 3,5×«TO"
 )
 
+def timed_query(function):
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        started = perf_counter()
+        result = function(*args, **kwargs)
+        elapsed = perf_counter() - started
+        print(f"[DB] {function.__name__}: {elapsed:.3f}s")
+        return result
+
+    return wrapper
 
 def _to_dataframe(result) -> pd.DataFrame:
     return pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -38,7 +49,7 @@ def get_statistics_teams() -> pd.DataFrame:
         """
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
     params: dict = {}
     team_filter = ""
@@ -179,7 +190,7 @@ def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_game_log(
     source_player_id: int,
     team_id: int,
@@ -234,7 +245,7 @@ def get_player_game_log(
         },
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_statistics(selected_team_ids: list[int] | None = None) -> pd.DataFrame:
     params: dict = {}
     team_filter = ""
@@ -425,7 +436,7 @@ def get_team_statistics(selected_team_ids: list[int] | None = None) -> pd.DataFr
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_game_log(team_id: int) -> pd.DataFrame:
     return _read_sql(
         """
@@ -505,7 +516,7 @@ def get_team_game_log(team_id: int) -> pd.DataFrame:
 # Feature 2 ev1 – Consistency
 # =========================
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_consistency(team_id: int | None = None, min_games: int = 2) -> pd.DataFrame:
     """
     Média e desvio-padrã««o (amostral) por jogador para:
@@ -609,7 +620,7 @@ def get_player_consistency(team_id: int | None = None, min_games: int = 2) -> pd
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_consistency(selected_team_ids: list[int] | None = None, min_games: int = 2) -> pd.DataFrame:
     """
     Média e desvio-padrã««o (amostral) por time para:
@@ -712,7 +723,7 @@ def get_team_consistency(selected_team_ids: list[int] | None = None, min_games: 
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_consistency_history(
     source_player_id: int,
     team_id: int,
@@ -781,7 +792,7 @@ def get_player_consistency_history(
         {"source_player_id": source_player_id, "team_id": team_id},
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_consistency_history(team_id: int, metric: str = "pts") -> pd.DataFrame:
     allowed = {
         "pts", "reb", "ast", "stl", "blk", "three_pt", "turnovers", "efficiency"
@@ -849,6 +860,7 @@ def get_team_consistency_history(team_id: int, metric: str = "pts") -> pd.DataFr
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_consistency_scatter(
     team_id: int | None = None,
     min_games: int = 4,
@@ -938,6 +950,7 @@ def get_player_consistency_scatter(
     )
 
 
+@timed_query
 def get_team_consistency_scatter(
     selected_team_ids: list[int] | None = None,
     min_games: int = 3,

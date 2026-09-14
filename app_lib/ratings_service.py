@@ -1,10 +1,21 @@
 from __future__ import annotations
-
+import streamlit as st
 import pandas as pd
 from sqlalchemy import text
-
+from functools import wraps
+from time import perf_counter
 from app_lib.db_v5 import engine
 
+def timed_query(function):
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        started = perf_counter()
+        result = function(*args, **kwargs)
+        elapsed = perf_counter() - started
+        print(f"[DB] {function.__name__}: {elapsed:.3f}s")
+        return result
+
+    return wrapper
 
 def _read(sql: str, params: dict | None = None) -> pd.DataFrame:
     with engine.connect() as conn:
@@ -21,7 +32,7 @@ def get_available_rounds() -> list[int]:
     )
     return [int(value) for value in df["round"].dropna().tolist()]
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_season_ranking() -> pd.DataFrame:
     return _read(
         """
@@ -43,6 +54,7 @@ def get_player_season_ranking() -> pd.DataFrame:
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_ratings_by_round(round_number: int | None = None) -> pd.DataFrame:
     params: dict = {}
     where_clause = ""
@@ -78,7 +90,7 @@ def get_player_ratings_by_round(round_number: int | None = None) -> pd.DataFrame
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_rating_history(source_player_id: int) -> pd.DataFrame:
     return _read(
         """
@@ -93,7 +105,7 @@ def get_player_rating_history(source_player_id: int) -> pd.DataFrame:
         {"source_player_id": source_player_id},
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_options() -> pd.DataFrame:
     return _read(
         """
@@ -125,7 +137,7 @@ def get_team_season_ranking() -> pd.DataFrame:
         """
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_ratings_by_round(round_number: int | None = None) -> pd.DataFrame:
     params: dict = {}
     where_clause = ""
@@ -150,7 +162,7 @@ def get_team_ratings_by_round(round_number: int | None = None) -> pd.DataFrame:
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_rating_history(team_id: int) -> pd.DataFrame:
     return _read(
         """
@@ -179,7 +191,7 @@ def get_team_options() -> pd.DataFrame:
         """
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_round_mvps() -> pd.DataFrame:
     return _read(
         """
@@ -207,7 +219,7 @@ def get_round_mvps() -> pd.DataFrame:
         """
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_round_leaders(round_number: int | None = None) -> pd.DataFrame:
     params: dict = {}
     where_clause = ""
@@ -244,7 +256,7 @@ def get_player_round_leaders(round_number: int | None = None) -> pd.DataFrame:
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_player_round_laggards(round_number: int | None = None) -> pd.DataFrame:
     params: dict = {}
     where_clause = ""
@@ -282,6 +294,7 @@ def get_player_round_laggards(round_number: int | None = None) -> pd.DataFrame:
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_round_leaders(round_number: int | None = None) -> pd.DataFrame:
     params: dict = {}
     where_clause = ""
@@ -307,7 +320,7 @@ def get_team_round_leaders(round_number: int | None = None) -> pd.DataFrame:
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_round_laggards(round_number: int | None = None) -> pd.DataFrame:
     params: dict = {}
     where_clause = ""
@@ -333,7 +346,7 @@ def get_team_round_laggards(round_number: int | None = None) -> pd.DataFrame:
         params,
     )
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def get_round_summary_stats(round_number: int | None = None) -> pd.DataFrame:
     params: dict = {}
     where_clause = ""
