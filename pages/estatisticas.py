@@ -407,7 +407,7 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
         plot_df = plot_df.sort_values("round").groupby("round").first().reset_index()
         plot_df = plot_df.set_index("round")[[metric]]
 
-        st.line_chart(plot_df, width="stretch")
+        st.line_chart(plot_df, use_container_width=True)
         
         player_history_table = game_log.drop(
         columns=["fantasy_game_id"],
@@ -471,7 +471,7 @@ def render_players_tab(teams_df: pd.DataFrame) -> None:
             }
         )
 
-        st.line_chart(chart_df,width="stretch",)
+        st.line_chart(plot_df, use_container_width=True)
 
         st.dataframe(
             history.rename(
