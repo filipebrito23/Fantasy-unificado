@@ -1,14 +1,20 @@
 from __future__ import annotations
-import streamlit as st
-import pandas as pd
-from sqlalchemy import text
+
 from functools import wraps
 from time import perf_counter
+
+import pandas as pd
+import streamlit as st
+from sqlalchemy import text
+
 from app_lib.db_v5 import engine
+from app_lib.season_config import ACTIVE_SEASON
 
 EFFICIENCY_FORMULA_LABEL = (
-    "1,5×«PTS + 3,5×«REB + 4,0×«AST + 5,0×«STL + 5,0×«BLK + 3,5×«3PT − 3,5×«TO"
+    "1,5×PTS + 3,5×REB + 4,0×AST + 5,0×STL + "
+    "5,0×BLK + 3,5×3PT − 3,5×TO"
 )
+
 
 def timed_query(function):
     @wraps(function)
@@ -20,6 +26,7 @@ def timed_query(function):
         return result
 
     return wrapper
+
 
 def _to_dataframe(result) -> pd.DataFrame:
     return pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -35,9 +42,52 @@ def _build_in_filter(values: list[int], prefix: str, params: dict) -> str:
     placeholders = []
     for index, value in enumerate(values):
         key = f"{prefix}_{index}"
-        params[key] = value
+        params[key] = int(value)
         placeholders.append(f":{key}")
     return ", ".join(placeholders)
+
+
+def _metric_expression(metric: str, alias: str = "gs") -> str:
+    allowed = {
+        "pts",
+        "reb",
+        "ast",
+        "stl",
+        "blk",
+        "three_pt",
+        "turnovers",
+        "efficiency",
+    }
+    if metric not in allowed:
+        raise ValueError(f"metric must be one of {allowed}")
+
+    if metric == "efficiency":
+        return f"""
+            COALESCE(
+                {alias}.efficiency,
+                1.5 * COALESCE({alias}.pts, 0)
+                + 3.5 * COALESCE({alias}.reb, 0)
+                + 4.0 * COALESCE({alias}.ast, 0)
+                + 5.0 * COALESCE({alias}.stl, 0)
+                + 5.0 * COALESCE({alias}.blk, 0)
+                + 3.5 * COALESCE({alias}.three_pt, 0)
+                - 3.5 * COALESCE({alias}.turnovers, 0)
+            )
+        """
+
+    return f"COALESCE({alias}.{metric}, 0)"
+
+
+def _has_stats(alias: str = "gs") -> str:
+    return f"""
+        COALESCE({alias}.pts, 0) <> 0
+        OR COALESCE({alias}.reb, 0) <> 0
+        OR COALESCE({alias}.ast, 0) <> 0
+        OR COALESCE({alias}.stl, 0) <> 0
+        OR COALESCE({alias}.blk, 0) <> 0
+        OR COALESCE({alias}.three_pt, 0) <> 0
+        OR COALESCE({alias}.turnovers, 0) <> 0
+    """
 
 
 def get_statistics_teams() -> pd.DataFrame:
@@ -49,13 +99,26 @@ def get_statistics_teams() -> pd.DataFrame:
         """
     )
 
+
 @st.cache_data(ttl=300, show_spinner=False)
-def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
-    params: dict = {}
+def get_player_statistics(
+    team_id: int | None = None,
+    season: str = ACTIVE_SEASON,
+) -> pd.DataFrame:
+    params: dict = {"season": season}
     team_filter = ""
     if team_id is not None:
-        team_filter = "WHERE b.team_id = :team_id"
-        params["team_id"] = team_id
+        team_filter = "AND b.team_id = :team_id"
+        params["team_id"] = int(team_id)
+
+    salary_columns = {
+        "2026-27": "salarie_26_27",
+        "2027-28": "salarie_27_28",
+        "2028-29": "salarie_28_29",
+    }
+    salary_column = salary_columns.get(season)
+    if salary_column is None:
+        raise ValueError(f"Temporada sem coluna de salário configurada: {season}")
 
     return _read_sql(
         f"""
@@ -73,36 +136,23 @@ def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
                 gs.blk,
                 gs.three_pt,
                 gs.turnovers,
-                COALESCE(
-                    gs.efficiency,
-                    1.5 * COALESCE(gs.pts, 0)
-                    + 3.5 * COALESCE(gs.reb, 0)
-                    + 4.0 * COALESCE(gs.ast, 0)
-                    + 5.0 * COALESCE(gs.stl, 0)
-                    + 5.0 * COALESCE(gs.blk, 0)
-                    + 3.5 * COALESCE(gs.three_pt, 0)
-                    - 3.5 * COALESCE(gs.turnovers, 0)
-                ) AS efficiency,
+                {_metric_expression('efficiency', 'gs')} AS efficiency,
                 ROW_NUMBER() OVER (
                     PARTITION BY gs.source_player_id, gs.team_id
-                    ORDER BY fg.round DESC, gs.fantasy_game_id DESC, gs.fantasy_game_stat_id DESC
+                    ORDER BY fg.round DESC, gs.fantasy_game_id DESC,
+                             gs.fantasy_game_stat_id DESC
                 ) AS recency_rank
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE
-                COALESCE(gs.pts, 0) <> 0
-                OR COALESCE(gs.reb, 0) <> 0
-                OR COALESCE(gs.ast, 0) <> 0
-                OR COALESCE(gs.stl, 0) <> 0
-                OR COALESCE(gs.blk, 0) <> 0
-                OR COALESCE(gs.three_pt, 0) <> 0
-                OR COALESCE(gs.turnovers, 0) <> 0
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
+            WHERE {_has_stats('gs')}
         ),
         salary_by_player AS (
             SELECT
                 fr.source_player_id,
                 fr.team_id,
-                MAX(COALESCE(fr.salarie_26_27, 0)) AS current_salary
+                MAX(COALESCE(fr.{salary_column}, 0)) AS current_salary
             FROM fantasy_roster fr
             GROUP BY fr.source_player_id, fr.team_id
         ),
@@ -136,6 +186,7 @@ def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
                 AVG(b.efficiency) FILTER (WHERE b.recency_rank <= 8) AS avg_efficiency_last_8,
                 AVG(b.efficiency) FILTER (WHERE b.recency_rank <= 12) AS avg_efficiency_last_12
             FROM base b
+            WHERE 1 = 1
             {team_filter}
             GROUP BY b.source_player_id, b.team_id
         )
@@ -172,8 +223,7 @@ def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
             ROUND(a.avg_efficiency_last_12::NUMERIC, 2) AS avg_efficiency_last_12,
             COALESCE(s.current_salary, 0) AS current_salary,
             CASE
-                WHEN COALESCE(s.current_salary, 0) > 0
-                THEN ROUND(
+                WHEN COALESCE(s.current_salary, 0) > 0 THEN ROUND(
                     (a.avg_efficiency / s.current_salary * 1000000)::NUMERIC,
                     4
                 )
@@ -184,19 +234,21 @@ def get_player_statistics(team_id: int | None = None) -> pd.DataFrame:
         JOIN teams t ON t.team_id = a.team_id
         LEFT JOIN salary_by_player s
             ON s.source_player_id = a.source_player_id
-            AND s.team_id = a.team_id
+           AND s.team_id = a.team_id
         ORDER BY a.avg_efficiency DESC NULLS LAST, a.avg_pts DESC, fp.player_name
         """,
         params,
     )
 
+
 @st.cache_data(ttl=300, show_spinner=False)
 def get_player_game_log(
     source_player_id: int,
     team_id: int,
+    season: str = ACTIVE_SEASON,
 ) -> pd.DataFrame:
     return _read_sql(
-        """
+        f"""
         SELECT
             fg.round,
             gs.fantasy_game_id,
@@ -207,51 +259,37 @@ def get_player_game_log(
             CAST(COALESCE(gs.blk, 0) AS DOUBLE PRECISION) AS blk,
             CAST(COALESCE(gs.three_pt, 0) AS DOUBLE PRECISION) AS three_pt,
             CAST(COALESCE(gs.turnovers, 0) AS DOUBLE PRECISION) AS turnovers,
-            CAST(
-                ROUND(
-                    COALESCE(
-                        gs.efficiency,
-                        1.5 * COALESCE(gs.pts, 0)
-                        + 3.5 * COALESCE(gs.reb, 0)
-                        + 4.0 * COALESCE(gs.ast, 0)
-                        + 5.0 * COALESCE(gs.stl, 0)
-                        + 5.0 * COALESCE(gs.blk, 0)
-                        + 3.5 * COALESCE(gs.three_pt, 0)
-                        - 3.5 * COALESCE(gs.turnovers, 0)
-                    )::NUMERIC,
-                    2
-                )
-                AS DOUBLE PRECISION
-            ) AS efficiency
+            CAST(ROUND(
+                {_metric_expression('efficiency', 'gs')}::NUMERIC, 2
+            ) AS DOUBLE PRECISION) AS efficiency
         FROM fantasy_game_stats gs
         JOIN fantasy_games fg
             ON fg.fantasy_game_id = gs.fantasy_game_id
+           AND fg.season = :season
         WHERE gs.source_player_id = :source_player_id
           AND gs.team_id = :team_id
-          AND (
-              COALESCE(gs.pts, 0) <> 0
-              OR COALESCE(gs.reb, 0) <> 0
-              OR COALESCE(gs.ast, 0) <> 0
-              OR COALESCE(gs.stl, 0) <> 0
-              OR COALESCE(gs.blk, 0) <> 0
-              OR COALESCE(gs.three_pt, 0) <> 0
-              OR COALESCE(gs.turnovers, 0) <> 0
-          )
+          AND ({_has_stats('gs')})
         ORDER BY fg.round, gs.fantasy_game_id
         """,
         {
             "source_player_id": int(source_player_id),
             "team_id": int(team_id),
+            "season": season,
         },
     )
 
+
 @st.cache_data(ttl=300, show_spinner=False)
-def get_team_statistics(selected_team_ids: list[int] | None = None) -> pd.DataFrame:
-    params: dict = {}
+def get_team_statistics(
+    selected_team_ids: list[int] | None = None,
+    season: str = ACTIVE_SEASON,
+) -> pd.DataFrame:
+    params: dict = {"season": season}
     team_filter = ""
     if selected_team_ids:
         team_filter = (
-            f"AND gs.team_id IN ({_build_in_filter(selected_team_ids, 'team', params)})"
+            "AND gs.team_id IN "
+            f"({_build_in_filter(selected_team_ids, 'team', params)})"
         )
 
     return _read_sql(
@@ -268,138 +306,86 @@ def get_team_statistics(selected_team_ids: list[int] | None = None) -> pd.DataFr
                 SUM(COALESCE(gs.blk, 0)) AS blk,
                 SUM(COALESCE(gs.three_pt, 0)) AS three_pt,
                 SUM(COALESCE(gs.turnovers, 0)) AS turnovers,
-                SUM(
-                    COALESCE(
-                        gs.efficiency,
-                        1.5 * COALESCE(gs.pts, 0)
-                        + 3.5 * COALESCE(gs.reb, 0)
-                        + 4.0 * COALESCE(gs.ast, 0)
-                        + 5.0 * COALESCE(gs.stl, 0)
-                        + 5.0 * COALESCE(gs.blk, 0)
-                        + 3.5 * COALESCE(gs.three_pt, 0)
-                        - 3.5 * COALESCE(gs.turnovers, 0)
-                    )
-                ) AS efficiency
+                SUM({_metric_expression('efficiency', 'gs')}) AS efficiency
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE (
-                COALESCE(gs.pts, 0) <> 0
-                OR COALESCE(gs.reb, 0) <> 0
-                OR COALESCE(gs.ast, 0) <> 0
-                OR COALESCE(gs.stl, 0) <> 0
-                OR COALESCE(gs.blk, 0) <> 0
-                OR COALESCE(gs.three_pt, 0) <> 0
-                OR COALESCE(gs.turnovers, 0) <> 0
-            )
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
+            WHERE ({_has_stats('gs')})
             {team_filter}
             GROUP BY gs.fantasy_game_id, gs.team_id, fg.round
         ),
         game_pairs AS (
-            SELECT
-                pg.fantasy_game_id,
-                pg.team_id,
-                pg.round,
-                pg.pts,
-                pg.reb,
-                pg.ast,
-                pg.stl,
-                pg.blk,
-                pg.three_pt,
-                pg.turnovers,
-                pg.efficiency,
-                opp.team_id AS opponent_team_id,
-                opp.pts AS opponent_pts,
-                opp.reb AS opponent_reb,
-                opp.ast AS opponent_ast,
-                opp.stl AS opponent_stl,
-                opp.blk AS opponent_blk,
-                opp.three_pt AS opponent_three_pt,
+            SELECT pg.*, opp.team_id AS opponent_team_id,
+                opp.pts AS opponent_pts, opp.reb AS opponent_reb,
+                opp.ast AS opponent_ast, opp.stl AS opponent_stl,
+                opp.blk AS opponent_blk, opp.three_pt AS opponent_three_pt,
                 opp.turnovers AS opponent_turnovers,
                 opp.efficiency AS opponent_efficiency
             FROM per_game pg
             JOIN per_game opp
                 ON opp.fantasy_game_id = pg.fantasy_game_id
-                AND opp.team_id <> pg.team_id
+               AND opp.team_id <> pg.team_id
         ),
         per_game_categories AS (
-            SELECT
-                gp.*,
-                (CASE WHEN gp.pts > gp.opponent_pts THEN 1 ELSE 0 END) AS pts_w,
-                (CASE WHEN gp.pts < gp.opponent_pts THEN 1 ELSE 0 END) AS pts_l,
-                (CASE WHEN gp.pts = gp.opponent_pts THEN 1 ELSE 0 END) AS pts_t,
-                (CASE WHEN gp.reb > gp.opponent_reb THEN 1 ELSE 0 END) AS reb_w,
-                (CASE WHEN gp.reb < gp.opponent_reb THEN 1 ELSE 0 END) AS reb_l,
-                (CASE WHEN gp.reb = gp.opponent_reb THEN 1 ELSE 0 END) AS reb_t,
-                (CASE WHEN gp.ast > gp.opponent_ast THEN 1 ELSE 0 END) AS ast_w,
-                (CASE WHEN gp.ast < gp.opponent_ast THEN 1 ELSE 0 END) AS ast_l,
-                (CASE WHEN gp.ast = gp.opponent_ast THEN 1 ELSE 0 END) AS ast_t,
-                (CASE WHEN gp.stl > gp.opponent_stl THEN 1 ELSE 0 END) AS stl_w,
-                (CASE WHEN gp.stl < gp.opponent_stl THEN 1 ELSE 0 END) AS stl_l,
-                (CASE WHEN gp.stl = gp.opponent_stl THEN 1 ELSE 0 END) AS stl_t,
-                (CASE WHEN gp.blk > gp.opponent_blk THEN 1 ELSE 0 END) AS blk_w,
-                (CASE WHEN gp.blk < gp.opponent_blk THEN 1 ELSE 0 END) AS blk_l,
-                (CASE WHEN gp.blk = gp.opponent_blk THEN 1 ELSE 0 END) AS blk_t,
-                (CASE WHEN gp.three_pt > gp.opponent_three_pt THEN 1 ELSE 0 END) AS three_pt_w,
-                (CASE WHEN gp.three_pt < gp.opponent_three_pt THEN 1 ELSE 0 END) AS three_pt_l,
-                (CASE WHEN gp.three_pt = gp.opponent_three_pt THEN 1 ELSE 0 END) AS three_pt_t,
-                (CASE WHEN gp.turnovers < gp.opponent_turnovers THEN 1 ELSE 0 END) AS to_w,
-                (CASE WHEN gp.turnovers > gp.opponent_turnovers THEN 1 ELSE 0 END) AS to_l,
-                (CASE WHEN gp.turnovers = gp.opponent_turnovers THEN 1 ELSE 0 END) AS to_t
+            SELECT gp.*,
+                CASE WHEN gp.pts > gp.opponent_pts THEN 1 ELSE 0 END AS pts_w,
+                CASE WHEN gp.pts < gp.opponent_pts THEN 1 ELSE 0 END AS pts_l,
+                CASE WHEN gp.pts = gp.opponent_pts THEN 1 ELSE 0 END AS pts_t,
+                CASE WHEN gp.reb > gp.opponent_reb THEN 1 ELSE 0 END AS reb_w,
+                CASE WHEN gp.reb < gp.opponent_reb THEN 1 ELSE 0 END AS reb_l,
+                CASE WHEN gp.reb = gp.opponent_reb THEN 1 ELSE 0 END AS reb_t,
+                CASE WHEN gp.ast > gp.opponent_ast THEN 1 ELSE 0 END AS ast_w,
+                CASE WHEN gp.ast < gp.opponent_ast THEN 1 ELSE 0 END AS ast_l,
+                CASE WHEN gp.ast = gp.opponent_ast THEN 1 ELSE 0 END AS ast_t,
+                CASE WHEN gp.stl > gp.opponent_stl THEN 1 ELSE 0 END AS stl_w,
+                CASE WHEN gp.stl < gp.opponent_stl THEN 1 ELSE 0 END AS stl_l,
+                CASE WHEN gp.stl = gp.opponent_stl THEN 1 ELSE 0 END AS stl_t,
+                CASE WHEN gp.blk > gp.opponent_blk THEN 1 ELSE 0 END AS blk_w,
+                CASE WHEN gp.blk < gp.opponent_blk THEN 1 ELSE 0 END AS blk_l,
+                CASE WHEN gp.blk = gp.opponent_blk THEN 1 ELSE 0 END AS blk_t,
+                CASE WHEN gp.three_pt > gp.opponent_three_pt THEN 1 ELSE 0 END AS three_pt_w,
+                CASE WHEN gp.three_pt < gp.opponent_three_pt THEN 1 ELSE 0 END AS three_pt_l,
+                CASE WHEN gp.three_pt = gp.opponent_three_pt THEN 1 ELSE 0 END AS three_pt_t,
+                CASE WHEN gp.turnovers < gp.opponent_turnovers THEN 1 ELSE 0 END AS to_w,
+                CASE WHEN gp.turnovers > gp.opponent_turnovers THEN 1 ELSE 0 END AS to_l,
+                CASE WHEN gp.turnovers = gp.opponent_turnovers THEN 1 ELSE 0 END AS to_t
             FROM game_pairs gp
         ),
         summarized AS (
             SELECT
                 team_id,
                 COUNT(DISTINCT fantasy_game_id) AS games_with_stats,
-                MIN(round) AS first_round,
-                MAX(round) AS last_round,
-                SUM(pts) AS total_pts,
-                SUM(reb) AS total_reb,
-                SUM(ast) AS total_ast,
-                SUM(stl) AS total_stl,
-                SUM(blk) AS total_blk,
-                SUM(three_pt) AS total_three_pt,
+                MIN(round) AS first_round, MAX(round) AS last_round,
+                SUM(pts) AS total_pts, SUM(reb) AS total_reb,
+                SUM(ast) AS total_ast, SUM(stl) AS total_stl,
+                SUM(blk) AS total_blk, SUM(three_pt) AS total_three_pt,
                 SUM(turnovers) AS total_turnovers,
                 SUM(efficiency) AS total_efficiency,
-                AVG(pts) AS avg_pts,
-                AVG(reb) AS avg_reb,
-                AVG(ast) AS avg_ast,
-                AVG(stl) AS avg_stl,
-                AVG(blk) AS avg_blk,
-                AVG(three_pt) AS avg_three_pt,
+                AVG(pts) AS avg_pts, AVG(reb) AS avg_reb,
+                AVG(ast) AS avg_ast, AVG(stl) AS avg_stl,
+                AVG(blk) AS avg_blk, AVG(three_pt) AS avg_three_pt,
                 AVG(turnovers) AS avg_turnovers,
                 AVG(efficiency) AS avg_efficiency,
                 STDDEV_POP(pts) AS stddev_pts,
-                SUM(pts_w) AS pts_wins,
-                SUM(pts_l) AS pts_losses,
-                SUM(pts_t) AS pts_ties,
-                SUM(reb_w) AS reb_wins,
-                SUM(reb_l) AS reb_losses,
-                SUM(reb_t) AS reb_ties,
-                SUM(ast_w) AS ast_wins,
-                SUM(ast_l) AS ast_losses,
-                SUM(ast_t) AS ast_ties,
-                SUM(stl_w) AS stl_wins,
-                SUM(stl_l) AS stl_losses,
-                SUM(stl_t) AS stl_ties,
-                SUM(blk_w) AS blk_wins,
-                SUM(blk_l) AS blk_losses,
-                SUM(blk_t) AS blk_ties,
-                SUM(three_pt_w) AS three_pt_wins,
+                SUM(pts_w) AS pts_wins, SUM(pts_l) AS pts_losses,
+                SUM(pts_t) AS pts_ties, SUM(reb_w) AS reb_wins,
+                SUM(reb_l) AS reb_losses, SUM(reb_t) AS reb_ties,
+                SUM(ast_w) AS ast_wins, SUM(ast_l) AS ast_losses,
+                SUM(ast_t) AS ast_ties, SUM(stl_w) AS stl_wins,
+                SUM(stl_l) AS stl_losses, SUM(stl_t) AS stl_ties,
+                SUM(blk_w) AS blk_wins, SUM(blk_l) AS blk_losses,
+                SUM(blk_t) AS blk_ties, SUM(three_pt_w) AS three_pt_wins,
                 SUM(three_pt_l) AS three_pt_losses,
                 SUM(three_pt_t) AS three_pt_ties,
-                SUM(to_w) AS to_wins,
-                SUM(to_l) AS to_losses,
+                SUM(to_w) AS to_wins, SUM(to_l) AS to_losses,
                 SUM(to_t) AS to_ties
             FROM per_game_categories
             GROUP BY team_id
         )
         SELECT
-            s.team_id,
-            t.team_name,
-            s.games_with_stats,
-            s.first_round,
-            s.last_round,
+            s.team_id, t.team_name, s.games_with_stats,
+            s.first_round, s.last_round,
             ROUND(s.total_pts, 2) AS total_pts,
             ROUND(s.total_reb, 2) AS total_reb,
             ROUND(s.total_ast, 2) AS total_ast,
@@ -421,7 +407,7 @@ def get_team_statistics(selected_team_ids: list[int] | None = None) -> pd.DataFr
             (s.pts_losses + s.reb_losses + s.ast_losses + s.stl_losses + s.blk_losses + s.three_pt_losses + s.to_losses) AS category_losses,
             (s.pts_ties + s.reb_ties + s.ast_ties + s.stl_ties + s.blk_ties + s.three_pt_ties + s.to_ties) AS category_ties,
             (s.pts_wins + s.reb_wins + s.ast_wins + s.stl_wins + s.blk_wins + s.three_pt_wins + s.to_wins)
-                - (s.pts_losses + s.reb_losses + s.ast_losses + s.stl_losses + s.blk_losses + s.three_pt_losses + s.to_losses) AS category_balance,
+            - (s.pts_losses + s.reb_losses + s.ast_losses + s.stl_losses + s.blk_losses + s.three_pt_losses + s.to_losses) AS category_balance,
             s.pts_wins, s.pts_losses, s.pts_ties,
             s.reb_wins, s.reb_losses, s.reb_ties,
             s.ast_wins, s.ast_losses, s.ast_ties,
@@ -431,20 +417,23 @@ def get_team_statistics(selected_team_ids: list[int] | None = None) -> pd.DataFr
             s.to_wins, s.to_losses, s.to_ties
         FROM summarized s
         JOIN teams t ON t.team_id = s.team_id
-        ORDER BY category_wins DESC, category_balance DESC, avg_efficiency DESC, t.team_name
+        ORDER BY category_wins DESC, category_balance DESC,
+                 avg_efficiency DESC, t.team_name
         """,
         params,
     )
 
+
 @st.cache_data(ttl=300, show_spinner=False)
-def get_team_game_log(team_id: int) -> pd.DataFrame:
+def get_team_game_log(
+    team_id: int,
+    season: str = ACTIVE_SEASON,
+) -> pd.DataFrame:
     return _read_sql(
-        """
+        f"""
         WITH per_game AS (
             SELECT
-                gs.fantasy_game_id,
-                gs.team_id,
-                fg.round,
+                gs.fantasy_game_id, gs.team_id, fg.round,
                 SUM(COALESCE(gs.pts, 0)) AS pts,
                 SUM(COALESCE(gs.reb, 0)) AS reb,
                 SUM(COALESCE(gs.ast, 0)) AS ast,
@@ -452,55 +441,40 @@ def get_team_game_log(team_id: int) -> pd.DataFrame:
                 SUM(COALESCE(gs.blk, 0)) AS blk,
                 SUM(COALESCE(gs.three_pt, 0)) AS three_pt,
                 SUM(COALESCE(gs.turnovers, 0)) AS turnovers,
-                SUM(COALESCE(gs.efficiency, 0)) AS efficiency
+                SUM({_metric_expression('efficiency', 'gs')}) AS efficiency
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE
-                COALESCE(gs.pts, 0) <> 0
-                OR COALESCE(gs.reb, 0) <> 0
-                OR COALESCE(gs.ast, 0) <> 0
-                OR COALESCE(gs.stl, 0) <> 0
-                OR COALESCE(gs.blk, 0) <> 0
-                OR COALESCE(gs.three_pt, 0) <> 0
-                OR COALESCE(gs.turnovers, 0) <> 0
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
+            WHERE ({_has_stats('gs')})
             GROUP BY gs.fantasy_game_id, gs.team_id, fg.round
         ),
         mine_with_opp AS (
             SELECT
-                mine.round,
-                mine.fantasy_game_id,
+                mine.round, mine.fantasy_game_id,
                 opp.team_id AS opponent_team_id,
                 t.team_name AS opponent,
-                mine.pts,
-                mine.reb,
-                mine.ast,
-                mine.stl,
-                mine.blk,
-                mine.three_pt,
-                mine.turnovers,
+                mine.pts, mine.reb, mine.ast, mine.stl, mine.blk,
+                mine.three_pt, mine.turnovers,
                 ROUND(mine.efficiency, 2) AS efficiency,
-                (
-                    (CASE WHEN mine.pts > opp.pts THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.reb > opp.reb THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.ast > opp.ast THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.stl > opp.stl THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.blk > opp.blk THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.three_pt > opp.three_pt THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.turnovers < opp.turnovers THEN 1 ELSE 0 END)
-                ) AS category_wins,
-                (
-                    (CASE WHEN mine.pts < opp.pts THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.reb < opp.reb THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.ast < opp.ast THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.stl < opp.stl THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.blk < opp.blk THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.three_pt < opp.three_pt THEN 1 ELSE 0 END) +
-                    (CASE WHEN mine.turnovers > opp.turnovers THEN 1 ELSE 0 END)
-                ) AS category_losses
+                (CASE WHEN mine.pts > opp.pts THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.reb > opp.reb THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.ast > opp.ast THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.stl > opp.stl THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.blk > opp.blk THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.three_pt > opp.three_pt THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.turnovers < opp.turnovers THEN 1 ELSE 0 END) AS category_wins,
+                (CASE WHEN mine.pts < opp.pts THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.reb < opp.reb THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.ast < opp.ast THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.stl < opp.stl THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.blk < opp.blk THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.three_pt < opp.three_pt THEN 1 ELSE 0 END)
+                + (CASE WHEN mine.turnovers > opp.turnovers THEN 1 ELSE 0 END) AS category_losses
             FROM per_game mine
             JOIN per_game opp
                 ON opp.fantasy_game_id = mine.fantasy_game_id
-                AND opp.team_id <> mine.team_id
+               AND opp.team_id <> mine.team_id
             JOIN teams t ON t.team_id = opp.team_id
             WHERE mine.team_id = :team_id
         )
@@ -508,74 +482,41 @@ def get_team_game_log(team_id: int) -> pd.DataFrame:
         FROM mine_with_opp
         ORDER BY round, fantasy_game_id
         """,
-        {"team_id": team_id},
+        {"team_id": int(team_id), "season": season},
     )
 
 
-# =========================
-# Feature 2 ev1 – Consistency
-# =========================
-
 @st.cache_data(ttl=300, show_spinner=False)
-def get_player_consistency(team_id: int | None = None, min_games: int = 2) -> pd.DataFrame:
-    """
-    Média e desvio-padrã««o (amostral) por jogador para:
-    PTS, REB, AST, STL, BLK, 3PT, TO e eficiência.
-    """
-    params: dict = {"min_games": min_games}
+def get_player_consistency(
+    team_id: int | None = None,
+    min_games: int = 2,
+    season: str = ACTIVE_SEASON,
+) -> pd.DataFrame:
+    params: dict = {"min_games": int(min_games), "season": season}
     team_filter = ""
     if team_id is not None:
         team_filter = "AND b.team_id = :team_id"
-        params["team_id"] = team_id
+        params["team_id"] = int(team_id)
 
     return _read_sql(
         f"""
         WITH base AS (
-            SELECT
-                gs.source_player_id,
-                gs.team_id,
-                gs.pts,
-                gs.reb,
-                gs.ast,
-                gs.stl,
-                gs.blk,
-                gs.three_pt,
-                gs.turnovers,
-                COALESCE(
-                    gs.efficiency,
-                    1.5 * COALESCE(gs.pts, 0)
-                    + 3.5 * COALESCE(gs.reb, 0)
-                    + 4.0 * COALESCE(gs.ast, 0)
-                    + 5.0 * COALESCE(gs.stl, 0)
-                    + 5.0 * COALESCE(gs.blk, 0)
-                    + 3.5 * COALESCE(gs.three_pt, 0)
-                    - 3.5 * COALESCE(gs.turnovers, 0)
-                ) AS efficiency
+            SELECT gs.source_player_id, gs.team_id,
+                gs.pts, gs.reb, gs.ast, gs.stl, gs.blk,
+                gs.three_pt, gs.turnovers,
+                {_metric_expression('efficiency', 'gs')} AS efficiency
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE
-                (
-                    COALESCE(gs.pts, 0) <> 0
-                    OR COALESCE(gs.reb, 0) <> 0
-                    OR COALESCE(gs.ast, 0) <> 0
-                    OR COALESCE(gs.stl, 0) <> 0
-                    OR COALESCE(gs.blk, 0) <> 0
-                    OR COALESCE(gs.three_pt, 0) <> 0
-                    OR COALESCE(gs.turnovers, 0) <> 0
-                )
-                {team_filter}
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
+            WHERE ({_has_stats('gs')})
+            {team_filter}
         ),
         aggregated AS (
-            SELECT
-                source_player_id,
-                team_id,
-                COUNT(*) AS games_played,
-                AVG(pts) AS avg_pts,
-                AVG(reb) AS avg_reb,
-                AVG(ast) AS avg_ast,
-                AVG(stl) AS avg_stl,
-                AVG(blk) AS avg_blk,
-                AVG(three_pt) AS avg_three_pt,
+            SELECT source_player_id, team_id, COUNT(*) AS games_played,
+                AVG(pts) AS avg_pts, AVG(reb) AS avg_reb,
+                AVG(ast) AS avg_ast, AVG(stl) AS avg_stl,
+                AVG(blk) AS avg_blk, AVG(three_pt) AS avg_three_pt,
                 AVG(turnovers) AS avg_turnovers,
                 AVG(efficiency) AS avg_efficiency,
                 STDDEV_SAMP(pts) AS stddev_pts,
@@ -590,11 +531,7 @@ def get_player_consistency(team_id: int | None = None, min_games: int = 2) -> pd
             GROUP BY source_player_id, team_id
             HAVING COUNT(*) >= :min_games
         )
-        SELECT
-            a.source_player_id,
-            fp.player_name,
-            a.team_id,
-            t.team_name,
+        SELECT a.source_player_id, fp.player_name, a.team_id, t.team_name,
             a.games_played,
             ROUND(a.avg_pts::NUMERIC, 2) AS avg_pts,
             ROUND(a.avg_reb::NUMERIC, 2) AS avg_reb,
@@ -620,24 +557,25 @@ def get_player_consistency(team_id: int | None = None, min_games: int = 2) -> pd
         params,
     )
 
+
 @st.cache_data(ttl=300, show_spinner=False)
-def get_team_consistency(selected_team_ids: list[int] | None = None, min_games: int = 2) -> pd.DataFrame:
-    """
-    Média e desvio-padrã««o (amostral) por time para:
-    PTS, REB, AST, STL, BLK, 3PT, TO e eficiência.
-    """
-    params: dict = {"min_games": min_games}
+def get_team_consistency(
+    selected_team_ids: list[int] | None = None,
+    min_games: int = 2,
+    season: str = ACTIVE_SEASON,
+) -> pd.DataFrame:
+    params: dict = {"min_games": int(min_games), "season": season}
     team_filter = ""
     if selected_team_ids:
         team_filter = (
-            f"AND gs.team_id IN ({_build_in_filter(selected_team_ids, 'team', params)})"
+            "AND gs.team_id IN "
+            f"({_build_in_filter(selected_team_ids, 'team', params)})"
         )
 
     return _read_sql(
         f"""
         WITH per_game AS (
-            SELECT
-                gs.team_id,
+            SELECT gs.team_id,
                 SUM(COALESCE(gs.pts, 0)) AS pts,
                 SUM(COALESCE(gs.reb, 0)) AS reb,
                 SUM(COALESCE(gs.ast, 0)) AS ast,
@@ -645,43 +583,20 @@ def get_team_consistency(selected_team_ids: list[int] | None = None, min_games: 
                 SUM(COALESCE(gs.blk, 0)) AS blk,
                 SUM(COALESCE(gs.three_pt, 0)) AS three_pt,
                 SUM(COALESCE(gs.turnovers, 0)) AS turnovers,
-                SUM(
-                    COALESCE(
-                        gs.efficiency,
-                        1.5 * COALESCE(gs.pts, 0)
-                        + 3.5 * COALESCE(gs.reb, 0)
-                        + 4.0 * COALESCE(gs.ast, 0)
-                        + 5.0 * COALESCE(gs.stl, 0)
-                        + 5.0 * COALESCE(gs.blk, 0)
-                        + 3.5 * COALESCE(gs.three_pt, 0)
-                        - 3.5 * COALESCE(gs.turnovers, 0)
-                    )
-                ) AS efficiency
+                SUM({_metric_expression('efficiency', 'gs')}) AS efficiency
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE
-                (
-                    COALESCE(gs.pts, 0) <> 0
-                    OR COALESCE(gs.reb, 0) <> 0
-                    OR COALESCE(gs.ast, 0) <> 0
-                    OR COALESCE(gs.stl, 0) <> 0
-                    OR COALESCE(gs.blk, 0) <> 0
-                    OR COALESCE(gs.three_pt, 0) <> 0
-                    OR COALESCE(gs.turnovers, 0) <> 0
-                )
-                {team_filter}
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
+            WHERE ({_has_stats('gs')})
+            {team_filter}
             GROUP BY gs.fantasy_game_id, gs.team_id
         ),
         aggregated AS (
-            SELECT
-                team_id,
-                COUNT(*) AS games_with_stats,
-                AVG(pts) AS avg_pts,
-                AVG(reb) AS avg_reb,
-                AVG(ast) AS avg_ast,
-                AVG(stl) AS avg_stl,
-                AVG(blk) AS avg_blk,
-                AVG(three_pt) AS avg_three_pt,
+            SELECT team_id, COUNT(*) AS games_with_stats,
+                AVG(pts) AS avg_pts, AVG(reb) AS avg_reb,
+                AVG(ast) AS avg_ast, AVG(stl) AS avg_stl,
+                AVG(blk) AS avg_blk, AVG(three_pt) AS avg_three_pt,
                 AVG(turnovers) AS avg_turnovers,
                 AVG(efficiency) AS avg_efficiency,
                 STDDEV_SAMP(pts) AS stddev_pts,
@@ -696,10 +611,7 @@ def get_team_consistency(selected_team_ids: list[int] | None = None, min_games: 
             GROUP BY team_id
             HAVING COUNT(*) >= :min_games
         )
-        SELECT
-            a.team_id,
-            t.team_name,
-            a.games_with_stats,
+        SELECT a.team_id, t.team_name, a.games_with_stats,
             ROUND(a.avg_pts::NUMERIC, 2) AS avg_pts,
             ROUND(a.avg_reb::NUMERIC, 2) AS avg_reb,
             ROUND(a.avg_ast::NUMERIC, 2) AS avg_ast,
@@ -723,52 +635,29 @@ def get_team_consistency(selected_team_ids: list[int] | None = None, min_games: 
         params,
     )
 
+
 @st.cache_data(ttl=300, show_spinner=False)
 def get_player_consistency_history(
     source_player_id: int,
     team_id: int,
     metric: str = "pts",
+    season: str = ACTIVE_SEASON,
 ) -> pd.DataFrame:
-    allowed = {
-        "pts", "reb", "ast", "stl", "blk", "three_pt", "turnovers", "efficiency"
-    }
-    if metric not in allowed:
-        raise ValueError(f"metric must be one of {allowed}")
-
-    # Expressão para calcular a métrica corretamente
-    if metric == "efficiency":
-        metric_sql = """
-            COALESCE(
-                gs.efficiency,
-                1.5 * COALESCE(gs.pts, 0)
-                + 3.5 * COALESCE(gs.reb, 0)
-                + 4.0 * COALESCE(gs.ast, 0)
-                + 5.0 * COALESCE(gs.stl, 0)
-                + 5.0 * COALESCE(gs.blk, 0)
-                + 3.5 * COALESCE(gs.three_pt, 0)
-                - 3.5 * COALESCE(gs.turnovers, 0)
-            )
-        """
-    else:
-        metric_sql = f"COALESCE(gs.{metric}, 0)"
-
+    metric_sql = _metric_expression(metric, "gs")
     return _read_sql(
         f"""
         WITH ordered AS (
-            SELECT
-                fg.round,
-                gs.fantasy_game_id,
+            SELECT fg.round, gs.fantasy_game_id,
                 {metric_sql} AS value
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
             WHERE gs.source_player_id = :source_player_id
               AND gs.team_id = :team_id
         ),
         with_stats AS (
-            SELECT
-                round,
-                fantasy_game_id,
-                value,
+            SELECT round, fantasy_game_id, value,
                 AVG(value) OVER (
                     ORDER BY round, fantasy_game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -779,9 +668,7 @@ def get_player_consistency_history(
                 ) AS running_stddev
             FROM ordered
         )
-        SELECT
-            round,
-            ROUND(value::NUMERIC, 2) AS value,
+        SELECT round, ROUND(value::NUMERIC, 2) AS value,
             ROUND(running_avg::NUMERIC, 2) AS running_avg,
             ROUND(COALESCE(running_stddev, 0)::NUMERIC, 2) AS running_stddev,
             ROUND((running_avg - COALESCE(running_stddev, 0))::NUMERIC, 2) AS lower_bound,
@@ -789,53 +676,35 @@ def get_player_consistency_history(
         FROM with_stats
         ORDER BY round, fantasy_game_id
         """,
-        {"source_player_id": source_player_id, "team_id": team_id},
+        {
+            "source_player_id": int(source_player_id),
+            "team_id": int(team_id),
+            "season": season,
+        },
     )
 
+
 @st.cache_data(ttl=300, show_spinner=False)
-def get_team_consistency_history(team_id: int, metric: str = "pts") -> pd.DataFrame:
-    allowed = {
-        "pts", "reb", "ast", "stl", "blk", "three_pt", "turnovers", "efficiency"
-    }
-    if metric not in allowed:
-        raise ValueError(f"metric must be one of {allowed}")
-
-    if metric == "efficiency":
-        metric_sql = """
-            SUM(
-                COALESCE(
-                    gs.efficiency,
-                    1.5 * COALESCE(gs.pts, 0)
-                    + 3.5 * COALESCE(gs.reb, 0)
-                    + 4.0 * COALESCE(gs.ast, 0)
-                    + 5.0 * COALESCE(gs.stl, 0)
-                    + 5.0 * COALESCE(gs.blk, 0)
-                    + 3.5 * COALESCE(gs.three_pt, 0)
-                    - 3.5 * COALESCE(gs.turnovers, 0)
-                )
-            )
-        """
-    else:
-        metric_sql = f"SUM(COALESCE(gs.{metric}, 0))"
-
+def get_team_consistency_history(
+    team_id: int,
+    metric: str = "pts",
+    season: str = ACTIVE_SEASON,
+) -> pd.DataFrame:
+    metric_sql = _metric_expression(metric, "gs")
     return _read_sql(
         f"""
         WITH per_game AS (
-            SELECT
-                gs.fantasy_game_id,
-                gs.team_id,
-                fg.round,
-                {metric_sql} AS value
+            SELECT gs.fantasy_game_id, gs.team_id, fg.round,
+                SUM({metric_sql}) AS value
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
             WHERE gs.team_id = :team_id
             GROUP BY gs.fantasy_game_id, gs.team_id, fg.round
         ),
         with_stats AS (
-            SELECT
-                round,
-                fantasy_game_id,
-                value,
+            SELECT round, fantasy_game_id, value,
                 AVG(value) OVER (
                     ORDER BY round, fantasy_game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -846,9 +715,7 @@ def get_team_consistency_history(team_id: int, metric: str = "pts") -> pd.DataFr
                 ) AS running_stddev
             FROM per_game
         )
-        SELECT
-            round,
-            ROUND(value::NUMERIC, 2) AS value,
+        SELECT round, ROUND(value::NUMERIC, 2) AS value,
             ROUND(running_avg::NUMERIC, 2) AS running_avg,
             ROUND(COALESCE(running_stddev, 0)::NUMERIC, 2) AS running_stddev,
             ROUND((running_avg - COALESCE(running_stddev, 0))::NUMERIC, 2) AS lower_bound,
@@ -856,7 +723,7 @@ def get_team_consistency_history(team_id: int, metric: str = "pts") -> pd.DataFr
         FROM with_stats
         ORDER BY round, fantasy_game_id
         """,
-        {"team_id": team_id},
+        {"team_id": int(team_id), "season": season},
     )
 
 
@@ -865,79 +732,36 @@ def get_player_consistency_scatter(
     team_id: int | None = None,
     min_games: int = 4,
     metric: str = "efficiency",
+    season: str = ACTIVE_SEASON,
 ) -> pd.DataFrame:
-    """
-    Dispersão média × desvio-padrão para jogadores.
-    """
-    allowed = {
-        "pts",
-        "reb",
-        "ast",
-        "stl",
-        "blk",
-        "three_pt",
-        "turnovers",
-        "efficiency",
-    }
-    if metric not in allowed:
-        raise ValueError(f"metric must be one of {allowed}")
-
-    params: dict = {"min_games": min_games}
+    params: dict = {"min_games": int(min_games), "season": season}
     team_filter = ""
     if team_id is not None:
         team_filter = "AND b.team_id = :team_id"
-        params["team_id"] = team_id
+        params["team_id"] = int(team_id)
 
-    # Calcular a métrica corretamente
-    metric_expr = f"""
-        COALESCE(
-            gs.efficiency,
-            1.5 * COALESCE(gs.pts, 0)
-            + 3.5 * COALESCE(gs.reb, 0)
-            + 4.0 * COALESCE(gs.ast, 0)
-            + 5.0 * COALESCE(gs.stl, 0)
-            + 5.0 * COALESCE(gs.blk, 0)
-            + 3.5 * COALESCE(gs.three_pt, 0)
-            - 3.5 * COALESCE(gs.turnovers, 0)
-        )""" if metric == "efficiency" else f"COALESCE(gs.{metric}, 0)"
-
+    metric_sql = _metric_expression(metric, "gs")
     return _read_sql(
         f"""
         WITH base AS (
-            SELECT
-                gs.source_player_id,
-                gs.team_id,
-                {metric_expr} AS value
+            SELECT gs.source_player_id, gs.team_id,
+                {metric_sql} AS value
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE
-                (
-                    COALESCE(gs.pts, 0) <> 0
-                    OR COALESCE(gs.reb, 0) <> 0
-                    OR COALESCE(gs.ast, 0) <> 0
-                    OR COALESCE(gs.stl, 0) <> 0
-                    OR COALESCE(gs.blk, 0) <> 0
-                    OR COALESCE(gs.three_pt, 0) <> 0
-                    OR COALESCE(gs.turnovers, 0) <> 0
-                )
-                {team_filter}
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
+            WHERE ({_has_stats('gs')})
+            {team_filter}
         ),
         aggregated AS (
-            SELECT
-                source_player_id,
-                team_id,
-                COUNT(*) AS games_played,
+            SELECT source_player_id, team_id, COUNT(*) AS games_played,
                 AVG(value) AS avg_value,
                 STDDEV_SAMP(value) AS stddev_value
             FROM base
             GROUP BY source_player_id, team_id
             HAVING COUNT(*) >= :min_games
         )
-        SELECT
-            a.source_player_id,
-            fp.player_name,
-            a.team_id,
-            t.team_name,
+        SELECT a.source_player_id, fp.player_name, a.team_id, t.team_name,
             a.games_played,
             ROUND(a.avg_value::NUMERIC, 2) AS avg_value,
             COALESCE(ROUND(a.stddev_value::NUMERIC, 2), 0) AS stddev_value
@@ -950,85 +774,44 @@ def get_player_consistency_scatter(
     )
 
 
-@timed_query
+@st.cache_data(ttl=300, show_spinner=False)
 def get_team_consistency_scatter(
     selected_team_ids: list[int] | None = None,
     min_games: int = 3,
     metric: str = "efficiency",
+    season: str = ACTIVE_SEASON,
 ) -> pd.DataFrame:
-    """
-    Dispersão média × desvio-padrão para times.
-    """
-    allowed = {
-        "pts",
-        "reb",
-        "ast",
-        "stl",
-        "blk",
-        "three_pt",
-        "turnovers",
-        "efficiency",
-    }
-    if metric not in allowed:
-        raise ValueError(f"metric must be one of {allowed}")
-
-    params: dict = {"min_games": min_games}
+    params: dict = {"min_games": int(min_games), "season": season}
     team_filter = ""
     if selected_team_ids:
         team_filter = (
-            f"AND gs.team_id IN ({_build_in_filter(selected_team_ids, 'team', params)})"
+            "AND gs.team_id IN "
+            f"({_build_in_filter(selected_team_ids, 'team', params)})"
         )
 
-    metric_expr = f"""
-        SUM(
-            COALESCE(
-                gs.efficiency,
-                1.5 * COALESCE(gs.pts, 0)
-                + 3.5 * COALESCE(gs.reb, 0)
-                + 4.0 * COALESCE(gs.ast, 0)
-                + 5.0 * COALESCE(gs.stl, 0)
-                + 5.0 * COALESCE(gs.blk, 0)
-                + 3.5 * COALESCE(gs.three_pt, 0)
-                - 3.5 * COALESCE(gs.turnovers, 0)
-            )
-        )""" if metric == "efficiency" else f"SUM(COALESCE(gs.{metric}, 0))"
-
+    metric_sql = _metric_expression(metric, "gs")
     return _read_sql(
         f"""
         WITH per_game AS (
-            SELECT
-                gs.fantasy_game_id,
-                gs.team_id,
-                {metric_expr} AS value
+            SELECT gs.fantasy_game_id, gs.team_id,
+                {metric_sql.replace('COALESCE(gs.', 'SUM(COALESCE(gs.').replace(', 0)', ', 0))')} AS value
             FROM fantasy_game_stats gs
-            JOIN fantasy_games fg ON fg.fantasy_game_id = gs.fantasy_game_id
-            WHERE
-                (
-                    COALESCE(gs.pts, 0) <> 0
-                    OR COALESCE(gs.reb, 0) <> 0
-                    OR COALESCE(gs.ast, 0) <> 0
-                    OR COALESCE(gs.stl, 0) <> 0
-                    OR COALESCE(gs.blk, 0) <> 0
-                    OR COALESCE(gs.three_pt, 0) <> 0
-                    OR COALESCE(gs.turnovers, 0) <> 0
-                )
-                {team_filter}
+            JOIN fantasy_games fg
+                ON fg.fantasy_game_id = gs.fantasy_game_id
+               AND fg.season = :season
+            WHERE ({_has_stats('gs')})
+            {team_filter}
             GROUP BY gs.fantasy_game_id, gs.team_id
         ),
         aggregated AS (
-            SELECT
-                team_id,
-                COUNT(*) AS games_with_stats,
+            SELECT team_id, COUNT(*) AS games_with_stats,
                 AVG(value) AS avg_value,
                 STDDEV_SAMP(value) AS stddev_value
             FROM per_game
             GROUP BY team_id
             HAVING COUNT(*) >= :min_games
         )
-        SELECT
-            a.team_id,
-            t.team_name,
-            a.games_with_stats,
+        SELECT a.team_id, t.team_name, a.games_with_stats,
             ROUND(a.avg_value::NUMERIC, 2) AS avg_value,
             COALESCE(ROUND(a.stddev_value::NUMERIC, 2), 0) AS stddev_value
         FROM aggregated a
