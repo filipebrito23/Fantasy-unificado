@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import streamlit as st
-
+from app_lib.season_config import (
+    ACTIVE_SEASON,
+    SEASONS,
+    SEASON_LABELS,
+)
 from app_lib.ratings_service import (
     get_available_rounds,
     get_player_options,
@@ -21,12 +25,19 @@ from app_lib.ratings_service import (
 )
 
 st.title("Ratings")
+
 st.caption(
     "Rating 10 representa a média da rodada. Valores acima de 10 indicam "
     "desempenho acima da média; valores abaixo de 10 indicam desempenho abaixo dela."
 )
-
-rounds = get_available_rounds()
+selected_season = st.selectbox(
+    "Temporada",
+    SEASONS,
+    index=SEASONS.index(ACTIVE_SEASON),
+    format_func=lambda season: SEASON_LABELS[season],
+    key="ratings_season",
+)
+rounds = get_available_rounds(selected_season)
 if not rounds:
     st.info(
         "Ainda não há ratings calculados. Execute recalculate_efficiency.sql e, "
@@ -57,7 +68,7 @@ tab_players, tab_teams, tab_mvps = st.tabs(["Jogadores", "Times", "MVPs"])
 with tab_players:
     st.subheader("Ranking da temporada")
 
-    player_ranking = get_player_season_ranking()
+    player_ranking = get_player_season_ranking(selected_season)
     if player_ranking.empty:
         st.info(" Não há ratings individuais disponíveis.")
     else:
@@ -100,8 +111,8 @@ with tab_players:
             key="ratings_player_round_highlights",
         )
 
-        leaders = get_player_round_leaders(selected_round_players)
-        laggards = get_player_round_laggards(selected_round_players)
+        leaders = get_player_round_leaders(selected_round_players, selected_season,)
+        laggards = get_player_round_laggards(selected_round_players, selected_season,)
 
         if not leaders.empty:
             st.markdown("### 3 melhores da rodada")
@@ -135,7 +146,7 @@ with tab_players:
             format_func=lambda value: f"Rodada {value}",
             key="ratings_player_round_table",
         )
-        player_round_df = get_player_ratings_by_round(player_round)
+        player_round_df = get_player_ratings_by_round(player_round, selected_season,)
         if not player_round_df.empty:
             st.dataframe(
                 _format_table(player_round_df),
@@ -161,7 +172,7 @@ with tab_players:
 
         st.subheader("Evolução de rating")
 
-        player_options = get_player_options()
+        player_options = get_player_options(selected_season)
         selected_player_name = st.selectbox(
             "Jogador",
             player_options["jogador"].tolist(),
@@ -173,7 +184,7 @@ with tab_players:
                 "source_player_id",
             ].iloc[0]
         )
-        player_history = get_player_rating_history(selected_player_id)
+        player_history = get_player_rating_history(selected_player_id,selected_season,)
         if not player_history.empty:
             st.line_chart(
                 player_history.set_index("rodada")[["rating"]],
@@ -187,7 +198,7 @@ with tab_players:
 with tab_teams:
     st.subheader("Ranking da temporada")
 
-    team_ranking = get_team_season_ranking()
+    team_ranking = get_team_season_ranking(selected_season)
     if team_ranking.empty:
         st.info("NÃ£o hÃ¡ ratings de times disponÃ¬veis.")
     else:
@@ -229,8 +240,8 @@ with tab_teams:
             key="ratings_team_round_highlights",
         )
 
-        team_leaders = get_team_round_leaders(selected_round_teams)
-        team_laggards = get_team_round_laggards(selected_round_teams)
+        team_leaders = get_team_round_leaders(selected_round_teams, selected_season,)
+        team_laggards = get_team_round_laggards(selected_round_teams, selected_season,)
 
         if not team_leaders.empty:
             st.markdown("### 3 melhores times da rodada")
@@ -264,7 +275,7 @@ with tab_teams:
             format_func=lambda value: f"Rodada {value}",
             key="ratings_team_round_table",
         )
-        team_round_df = get_team_ratings_by_round(team_round)
+        team_round_df = get_team_ratings_by_round(team_round, selected_season,)
         if not team_round_df.empty:
             st.dataframe(
                 _format_table(team_round_df),
@@ -283,7 +294,7 @@ with tab_teams:
 
         st.subheader("Evolução de rating")
 
-        team_options = get_team_options()
+        team_options = get_team_options(selected_season)
         selected_team_name = st.selectbox(
             "Time",
             team_options["time"].tolist(),
@@ -292,7 +303,7 @@ with tab_teams:
         selected_team_id = int(
             team_options.loc[team_options["time"] == selected_team_name, "team_id"].iloc[0]
         )
-        team_history = get_team_rating_history(selected_team_id)
+        team_history = get_team_rating_history(selected_team_id, selected_season)
         if not team_history.empty:
             st.line_chart(
                 team_history.set_index("rodada")[["rating"]],
@@ -308,7 +319,7 @@ with tab_mvps:
     st.caption(
         "Desempates: maior eficiência, mais pontos, menos turnovers e nome em ordem alfabética."
     )
-    mvps = get_round_mvps()
+    mvps = get_round_mvps(selected_season)
     if mvps.empty:
         st.info("Ainda nÃ£o hÃ¡ MVPs calculados.")
     else:

@@ -3,7 +3,11 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-
+from app_lib.season_config import (
+    ACTIVE_SEASON,
+    SEASONS,
+    SEASON_LABELS,
+)
 from app_lib.fantasy_data_service import load_fantasy_data_from_neon
 from app_lib.standings_service import build_classification_bundle
 
@@ -181,41 +185,44 @@ def render_agenda_tab(data: dict[str, pd.DataFrame]) -> None:
 
 
 def main():
-    st.title("Classificacao")
-    st.caption("Classificacao, confronto direto e calendario da temporada")
+    st.title("Classificação")
+    st.caption(
+        "Classificação, confronto direto, calendário e agenda NBA da temporada"
+    )
 
     data = cached_load()
 
-    # A função load_fantasy_data_from_neon já retorna as chaves "games" e "teams"
-    # no mesmo formato antes obtido via load_workbook_data('roster.xlsx').
-    games_df = data.get("games", pd.DataFrame())
-    teams_df = data.get("teams", pd.DataFrame())
+    games_df = data.get("games", pd.DataFrame()).copy()
+    teams_df = data.get("teams", pd.DataFrame()).copy()
+
+    selected_season = st.selectbox(
+        "Temporada",
+        SEASONS,
+        index=SEASONS.index(ACTIVE_SEASON),
+        format_func=lambda season: SEASON_LABELS[season],
+        key="classification_season",
+    )
 
     if games_df.empty:
         st.info("Nenhum jogo encontrado na base de Classificação.")
-        # Ainda permitimos mostrar a tabela de times vazia ou com 0 vitórias/derrotas
-    bundle = build_classification_bundle(games_df, teams_df)
+        st.stop()
 
-    tabs = st.tabs([
-        "Classificacao",
-        "Confronto direto",
-        "Calendario",
-        "Agenda NBA",
-    ])
+    # Compatibilidade com o formato atual do loader.
+    # Enquanto a origem ainda não tiver season, os jogos atuais pertencem a 2026-27.
+    if "season" not in games_df.columns:
+        games_df["season"] = ACTIVE_SEASON
+    else:
+        games_df["season"] = games_df["season"].fillna(ACTIVE_SEASON)
 
-    with tabs[0]:
-        render_classificacao_principal(bundle.standings)
-        render_playoffs_eliminados(bundle.standings)
+    season_games_df = games_df[
+        games_df["season"] == selected_season
+    ].copy()
 
-    with tabs[1]:
-        render_confronto_tab(bundle.head_to_head_matrix)
-
-    with tabs[2]:
-        render_calendario_tab(bundle.schedule_check, games_df)
-
-    with tabs[3]:
-        render_agenda_tab(data)
-        return
+    if season_games_df.empty:
+        st.info(
+            f"Não há jogos carregados para a temporada {selected_season}."
+        )
+        st.stop()
 
     required_cols = {
         "id_jogo",
@@ -228,21 +235,48 @@ def main():
         "rodada",
     }
 
-    missing_cols = required_cols - set(games_df.columns)
+    missing_cols = required_cols - set(season_games_df.columns)
     if missing_cols:
-        st.error(f"Colunas ausentes na base de jogos: {', '.join(sorted(missing_cols))}")
+        st.error(
+            "Colunas ausentes na base de jogos: "
+            + ", ".join(sorted(missing_cols))
+        )
         st.stop()
 
-    bundle = build_classification_bundle(games_df, teams_df)
+    bundle = build_classification_bundle(
+        season_games_df,
+        teams_df,
+    )
 
-    tabs = st.tabs(["Classificacao", "Confronto direto", "Calendario"])
+    tabs = st.tabs(
+        [
+            "Classificação",
+            "Confronto direto",
+            "Calendário",
+            "Agenda NBA",
+        ]
+    )
+
     with tabs[0]:
         render_classificacao_principal(bundle.standings)
         render_playoffs_eliminados(bundle.standings)
+
     with tabs[1]:
         render_confronto_tab(bundle.head_to_head_matrix)
+
     with tabs[2]:
-        render_calendario_tab(bundle.schedule_check, games_df)
+        render_calendario_tab(
+            bundle.schedule_check,
+            season_games_df,
+        )
+
+    with tabs[3]:
+        if selected_season == ACTIVE_SEASON:
+            render_agenda_tab(data)
+        else:
+            st.info(
+                "A Agenda NBA desta temporada ainda não foi carregada."
+            )
 
 
 if __name__ == "__main__":
