@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+
 from typing import Any
+
 
 import pandas as pd
 import streamlit as st
 
+
 from app_lib.transactions_service import (
     TX_ITEMS_SHEET,
     TX_SHEET,
-    append_transaction,
     validate_items_bilateral,
     pick_domain_ids,
-    update_rosters,
+    save_and_apply_transaction_neon,
 )
 from app_lib.transactions_form_helpers import (
     build_prepared_items,
@@ -202,6 +204,9 @@ def render_transactions_tab(
     is_admin: bool,
     DEFAULT_FILE: Any,
 ) -> None:
+    # DEFAULT_FILE é mantido por compatibilidade, mas não é mais usado.
+    # Toda gravação de transactions agora é feita no Neon.
+
     if is_admin:
         with st.expander("Registrar nova transaction", expanded=False):
             tx_base_df = data.get(TX_SHEET, pd.DataFrame())
@@ -333,7 +338,10 @@ def render_transactions_tab(
                     for err in form_errors:
                         st.error(err)
                 else:
+                    # O ID local (next_tx_id) ainda é usado apenas para exibição no histórico.
+                    # O Neon gera seu próprio fantasy_transaction_id internamente.
                     next_tx_id, _ = make_next_transaction_id(tx_base_df, start=1)
+
                     tx_row = build_tx_row(
                         tx_base_df=tx_base_df,
                         next_tx_id=next_tx_id,
@@ -348,12 +356,15 @@ def render_transactions_tab(
                     )
 
                     prepared_items = build_prepared_items(transaction_items_df, next_tx_id, valid_item_rows)
-                    append_transaction(str(DEFAULT_FILE), tx_row, prepared_items)
-                    update_rosters(str(DEFAULT_FILE), tx_row, prepared_items)
 
-                    st.cache_data.clear()
-                    st.success("Transaction salva e aplicada com sucesso.")
-                    st.rerun()
+                    try:
+                        save_and_apply_transaction_neon(tx_row, prepared_items, next_tx_id)
+                    except Exception as e:
+                        st.error(f"Erro ao salvar transaction no Neon: {e}")
+                    else:
+                        st.cache_data.clear()
+                        st.success("Transaction salva e aplicada com sucesso.")
+                        st.rerun()
 
     st.subheader("Histórico de transactions")
     if team_transactions_df.empty:
@@ -403,3 +414,7 @@ def render_transactions_tab(
 
         display_tx = normalize_transaction_display_df(filtered_tx)
         st.dataframe(display_tx, use_container_width=True, hide_index=True)
+
+        with st.expander("Debug: transactions raw", expanded=False):
+            st.dataframe(data.get("transactions"), use_container_width=True, hide_index=True)
+            st.dataframe(data.get("transactionitems"), use_container_width=True, hide_index=True)
