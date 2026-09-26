@@ -111,14 +111,6 @@ def get_player_statistics(
         team_filter = "AND b.team_id = :team_id"
         params["team_id"] = int(team_id)
 
-    salary_columns = {
-        "2026-27": "salarie_26_27",
-        "2027-28": "salarie_27_28",
-        "2028-29": "salarie_28_29",
-    }
-    salary_column = salary_columns.get(season)
-    if salary_column is None:
-        raise ValueError(f"Temporada sem coluna de salário configurada: {season}")
 
     return _read_sql(
         f"""
@@ -148,14 +140,13 @@ def get_player_statistics(
                AND fg.season = :season
             WHERE {_has_stats('gs')}
         ),
-        salary_by_player AS (
-            SELECT
-                fr.source_player_id,
-                fr.team_id,
-                MAX(COALESCE(fr.{salary_column}, 0)) AS current_salary
-            FROM fantasy_roster fr
-            GROUP BY fr.source_player_id, fr.team_id
-        ),
+salary_by_player AS (
+    SELECT
+        frs.source_player_id, frs.team_id, MAX(frs.salary) AS current_salary
+    FROM fantasy_roster_seasons frs
+    WHERE frs.season = :season
+      AND frs.roster_type = 'main'
+    GROUP BY frs.source_player_id, frs.team_id),
         aggregated AS (
             SELECT
                 b.source_player_id,
