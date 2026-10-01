@@ -37,6 +37,25 @@ def _compact_team_columns(df: pd.DataFrame) -> dict:
         "Posição": st.column_config.TextColumn("Posição", width="small"),
     }
 
+def _format_salary_columns(
+    df: pd.DataFrame,
+    visible_seasons: list[str],
+) -> pd.DataFrame:
+    out = df.copy()
+
+    for season in visible_seasons:
+        column = f"Salário {season}"
+
+        if column in out.columns:
+            out[column] = out[column].map(
+                lambda value: (
+                    f"US$ {float(value):,.2f}"
+                    if pd.notna(value)
+                    else ""
+                )
+            )
+
+    return out
 
 def render_main_tab(page_context: dict) -> None:
     main_roster = page_context["main_roster"]
@@ -45,7 +64,12 @@ def render_main_tab(page_context: dict) -> None:
     totals_by_season = page_context["totals_by_season"]
 
     display_main = _prepare_main_display(
-        main_roster.copy()
+        page_context["display_main"]
+    )
+
+    display_main = _format_salary_columns(
+        display_main,
+        visible_seasons,
     )
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -148,7 +172,7 @@ def render_main_tab(page_context: dict) -> None:
                         season,
                         season,
                     ),
-                    format="%.2f",
+                    format="Text",
                     disabled=True,
                 )
             )
@@ -302,7 +326,7 @@ def render_dev_tab(page_context: dict) -> None:
                         season,
                         season,
                     ),
-                    format="%.2f",
+                    format="Text",
                     disabled=True,
                 )
             )
