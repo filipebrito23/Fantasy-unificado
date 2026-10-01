@@ -367,6 +367,24 @@ def validate_items_bilateral(data, item_rows: list[dict], transaction_type: str 
             errors.append(f"Item {i}: tipo de asset inválido.")
     return errors
 
+def _normalize_db_season(value) -> str | None:
+    if value is None:
+        return None
+
+    value = str(value).strip()
+
+    season_map = {
+        "26_27": "2026-27",
+        "27_28": "2027-28",
+        "28_29": "2028-29",
+        "29_30": "2029-30",
+        "2026-27": "2026-27",
+        "2027-28": "2027-28",
+        "2028-29": "2028-29",
+        "2029-30": "2029-30",
+    }
+
+    return season_map.get(value, value)
 
 def save_and_apply_transaction_neon(
     tx_row: dict,
@@ -386,7 +404,7 @@ def save_and_apply_transaction_neon(
     initiated_by = tx_row.get("initiated_by", tx_row.get("initiatedby"))
     notes = tx_row.get("notes")
     season = tx_row.get("season")
-
+    season = _normalize_db_season(season)
     with get_neon_connection() as conn:
         # ---------------------------------------------------------
         # Cabeçalho da transaction
@@ -812,9 +830,42 @@ def save_and_apply_transaction_neon(
                 continue
 
             # WAIVE
-            if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
+            if tx_type in {
+                "WAIVE",
+                "DISPENSA",
+                "DISMISS",
+                "DROP",
+            }:
                 if from_team_id is None:
                     continue
+
+                if from_roster_type not in {
+                    "MAIN",
+                    "DEV",
+                }:
+                    from_roster_type = "MAIN"
+
+                conn.execute(
+                    text(
+                        """
+                        UPDATE fantasy_roster_seasons
+                        SET is_active = FALSE
+                        WHERE team_id = :team_id
+                        AND source_player_id = :player_id
+                        AND season = :season
+                        AND roster_type = :roster_type
+                        AND is_active = TRUE;
+                        """
+                    ),
+                    {
+                        "team_id": int(from_team_id),
+                        "player_id": int(pid),
+                        "season": season,
+                        "roster_type": from_roster_type,
+                    },
+                )
+
+                continue
 
                 if from_roster_type == "DEV":
                     conn.execute(

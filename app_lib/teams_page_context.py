@@ -34,33 +34,61 @@ def _format_positions_text(counts: dict) -> str:
     return " | ".join([f"{pos}: {qty}" for pos, qty in counts.items()])
 
 
-def _build_picks_display(team_picks_df: pd.DataFrame, team_lookup: dict) -> pd.DataFrame:
+def _build_picks_display(
+    team_picks_df: pd.DataFrame,
+    team_lookup: dict,
+) -> pd.DataFrame:
     if team_picks_df.empty:
         return team_picks_df.copy()
 
     picks_display = team_picks_df.copy()
 
-    if "original_team_pick_id" in picks_display.columns:
+    if "original_team_name" in picks_display.columns:
         picks_display["Time original"] = (
-            picks_display["original_team_pick_id"]
-            .map(team_lookup)
-            .fillna(picks_display["original_team_pick_id"])
+            picks_display["original_team_name"]
         )
 
-    if "current_team_owner_id" in picks_display.columns:
-        picks_display["Time atual"] = (
-            picks_display["current_team_owner_id"]
+    elif "original_team_pick_id" in picks_display.columns:
+        picks_display["Time original"] = (
+            picks_display[
+                "original_team_pick_id"
+            ]
             .map(team_lookup)
-            .fillna(picks_display["current_team_owner_id"])
+            .fillna(
+                picks_display[
+                    "original_team_pick_id"
+                ]
+            )
+        )
+
+    if "current_team_name" in picks_display.columns:
+        picks_display["Time atual"] = (
+            picks_display["current_team_name"]
+        )
+
+    elif "current_team_owner_id" in picks_display.columns:
+        picks_display["Time atual"] = (
+            picks_display[
+                "current_team_owner_id"
+            ]
+            .map(team_lookup)
+            .fillna(
+                picks_display[
+                    "current_team_owner_id"
+                ]
+            )
         )
 
     rename_map = {
         "pick_id": "Pick",
+        "source_pick_id": "Pick origem",
         "year": "Ano",
         "round": "Round",
     }
 
-    return picks_display.rename(columns=rename_map)
+    return picks_display.rename(
+        columns=rename_map
+    )
 
 
 def _get_cap_status(cap_remaining: float) -> str:
@@ -693,9 +721,32 @@ def build_teams_page_context(
         selected_start_season
     )
 
-    team_picks_df = get_team_picks(
-        selected_team_id,
-        selected_db_season,
+    picks_frames = []
+
+    for current_season in visible_seasons:
+        current_db_season = _normalize_season_for_db(
+            current_season
+        )
+
+        current_picks = get_team_picks(
+            selected_team_id,
+            current_db_season,
+        )
+
+        if not current_picks.empty:
+            current_picks = current_picks.copy()
+            current_picks["Temporada"] = (
+                current_season
+            )
+            picks_frames.append(current_picks)
+
+    team_picks_df = (
+        pd.concat(
+            picks_frames,
+            ignore_index=True,
+        )
+        if picks_frames
+        else pd.DataFrame()
     )
 
     pick_year_counts = (
