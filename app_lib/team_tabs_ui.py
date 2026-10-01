@@ -148,7 +148,7 @@ def render_main_tab(page_context: dict) -> None:
                         season,
                         season,
                     ),
-                    format="%,.2f",
+                    format="%.2f",
                     disabled=True,
                 )
             )
@@ -302,7 +302,7 @@ def render_dev_tab(page_context: dict) -> None:
                         season,
                         season,
                     ),
-                    format="%,.2f",
+                    format="%.2f",
                     disabled=True,
                 )
             )
