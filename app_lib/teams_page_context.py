@@ -614,45 +614,8 @@ def build_teams_page_context(
     fines_df = get_team_fines(
         selected_team_id
     )
+    
     totals_by_season = {}
-
-    for current_season in visible_seasons:
-        current_db_season = _normalize_season_for_db(
-            current_season
-        )
-
-        main_totals_raw = get_team_roster_totals(
-            selected_team_id,
-            current_db_season,
-            "MAIN",
-        )
-
-        dev_totals_raw = get_team_roster_totals(
-            selected_team_id,
-            current_db_season,
-            "DEV",
-        )
-
-        current_fines = _extract_fine_for_season(
-            fines_df,
-            selected_team_id,
-            current_season,
-        )
-
-        main_totals = _format_totals_for_existing_ui(
-            main_totals_raw,
-            fines_total=current_fines,
-            season=current_season,
-            apply_fines=True,
-        )
-
-        dev_totals = _format_totals_for_existing_ui(
-            dev_totals_raw,
-            fines_total=0.0,
-            season=current_season,
-            apply_fines=False,
-        )
-        totals_by_season = {}
 
     for current_season in visible_seasons:
         current_db_season = _normalize_season_for_db(
