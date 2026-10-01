@@ -8,6 +8,181 @@ from sqlalchemy import text
 TX_SHEET = "transactions"
 TX_ITEMS_SHEET = "transactionitems"
 
+PLAYER_ITEM_TYPES = {"player", "jogador"}
+PICK_ITEM_TYPES = {"pick", "picks"}
+
+TRADE_TRANSACTION_TYPES = {"TRADE"}
+MOVE_TRANSACTION_TYPES = {
+    "MOVE",
+    "PROMOTION",
+    "SENDDOWN",
+    "CALLUP",
+    "DEVPROMOTION",
+    "DEVDEMOTION",
+}
+PICK_SWAP_TRANSACTION_TYPES = {"PICK SWAP"}
+
+def _normalized_roster_type(value) -> str | None:
+    value = str(value or "").strip().upper()
+    if value in {"MAIN", "DEV"}:
+        return value
+    return None
+
+def _count_roster_rows(
+    conn,
+    *,
+    team_id: int,
+    source_player_id: int,
+    roster_type: str,
+) -> int:
+    result = conn.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM fantasy_roster_seasons
+            WHERE team_id = :team_id
+              AND source_player_id = :source_player_id
+              AND roster_type = :roster_type
+            """
+        ),
+        {
+            "team_id": int(team_id),
+            "source_player_id": int(source_player_id),
+            "roster_type": _db_roster_type(roster_type),
+        },
+    )
+    return int(result.scalar() or 0)
+
+def _move_player_all_seasons(
+    conn,
+    *,
+    source_player_id: int,
+    from_team_id: int,
+    to_team_id: int,
+    roster_type: str,
+) -> int:
+    roster_type = _normalized_roster_type(roster_type)
+
+    if roster_type is None:
+        raise ValueError("roster_type deve ser MAIN ou DEV")
+
+    before_count = _count_roster_rows(
+        conn,
+        team_id=from_team_id,
+        source_player_id=source_player_id,
+        roster_type=roster_type,
+    )
+
+    if before_count == 0:
+        raise ValueError(
+            f"Jogador {source_player_id} não encontrado no "
+            f"time {from_team_id} / elenco {roster_type}."
+        )
+
+    result = conn.execute(
+        text(
+            """
+            UPDATE fantasy_roster_seasons
+            SET team_id = :to_team_id,
+                updated_at = NOW()
+            WHERE team_id = :from_team_id
+              AND source_player_id = :source_player_id
+              AND roster_type = :roster_type
+            """
+        ),
+        {
+            "source_player_id": int(source_player_id),
+            "from_team_id": int(from_team_id),
+            "to_team_id": int(to_team_id),
+            "roster_type": _db_roster_type(roster_type),
+        },
+    )
+
+    changed_rows = int(result.rowcount or 0)
+
+    if changed_rows != before_count:
+        raise ValueError(
+            f"Movimentação inconsistente para o jogador {source_player_id}: "
+            f"esperadas {before_count} linhas, alteradas {changed_rows}."
+        )
+
+    return changed_rows
+
+def _move_player_between_rosters_all_seasons(
+    conn,
+    *,
+    source_player_id: int,
+    team_id: int,
+    from_roster_type: str,
+    to_roster_type: str,
+) -> int:
+    db_from_roster_type = _db_roster_type(from_roster_type)
+    db_to_roster_type = _db_roster_type(to_roster_type)
+
+    if db_from_roster_type is None or db_to_roster_type is None:
+        raise ValueError(
+            "A movimentação exige os elencos MAIN e DEV."
+        )
+
+    if db_from_roster_type == db_to_roster_type:
+        raise ValueError(
+            "A movimentação precisa trocar entre MAIN e DEV."
+        )
+
+    result = conn.execute(
+        text(
+            """
+            UPDATE fantasy_roster_seasons
+            SET roster_type = :to_roster_type
+            WHERE team_id = :team_id
+              AND source_player_id = :source_player_id
+              AND roster_type = :from_roster_type
+            """
+        ),
+        {
+            "team_id": int(team_id),
+            "source_player_id": int(source_player_id),
+            "from_roster_type": db_from_roster_type,
+            "to_roster_type": db_to_roster_type,
+        },
+    )
+
+    changed_rows = int(result.rowcount or 0)
+
+    if changed_rows == 0:
+        raise ValueError(
+            "Nenhum registro correspondente foi encontrado."
+        )
+
+    return changed_rows
+
+def _swap_pick_owner(
+    conn,
+    *,
+    source_pick_id: str,
+    from_team_id: int,
+    to_team_id: int,
+) -> None:
+    result = conn.execute(
+        text(
+            """
+            UPDATE fantasy_picks
+            SET current_team_owner_id = :to_team_id
+            WHERE source_pick_id = :source_pick_id
+              AND current_team_owner_id = :from_team_id
+            """
+        ),
+        {
+            "source_pick_id": str(source_pick_id).strip(),
+            "from_team_id": int(from_team_id),
+            "to_team_id": int(to_team_id),
+        },
+    )
+
+    if int(result.rowcount or 0) != 1:
+        raise ValueError(
+            f"Pick {source_pick_id} não encontrada no time {from_team_id}."
+        )
 
 def _to_int(value):
     try:
@@ -15,9 +190,38 @@ def _to_int(value):
     except Exception:
         return None
 
+def _db_roster_type(value) -> str | None:
+    normalized = str(value or "").strip().upper()
 
-def _normalize_roster_type(value):
-    return str(value or "").strip().upper()
+    mapping = {
+        "MAIN": "main",
+        "ROSTER": "main",
+        "PRINCIPAL": "main",
+        "DEV": "development",
+        "DEVELOPMENT": "development",
+        "DESENVOLVIMENTO": "development",
+    }
+
+    return mapping.get(normalized)
+
+def _normalize_roster_type(value) -> str | None:
+    normalized = str(value or "").strip().upper()
+
+    if normalized in {
+        "MAIN",
+        "ROSTER",
+        "PRINCIPAL",
+    }:
+        return "MAIN"
+
+    if normalized in {
+        "DEV",
+        "DEVELOPMENT",
+        "DESENVOLVIMENTO",
+    }:
+        return "DEV"
+
+    return None
 
 
 def _item_value(item, *keys, default=None):
@@ -122,7 +326,7 @@ def validate_items_bilateral(data, item_rows: list[dict], transaction_type: str 
             if to_team_id is None:
                 errors.append(f"Item {i}: adição exige time de destino.")
                 continue
-        elif tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"}:
+        elif tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION", "DEVPROMOTION","DEVDEMOTION",}:
             if from_team_id is None:
                 errors.append(f"Item {i}: movimentação interna exige origem e destino.")
                 continue
@@ -141,8 +345,10 @@ def validate_items_bilateral(data, item_rows: list[dict], transaction_type: str 
                 if asset_id_int not in player_ids:
                     errors.append(f"Item {i}: jogador fora do domínio do time origem.")
                     continue
-            if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"} or same_team:
-                if from_roster_type not in {"MAIN", "DEV"} or to_roster_type not in {"MAIN", "DEV"}:
+            if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION", "DEVPROMOTION","DEVDEMOTION",} or same_team:
+                from_roster_type = _normalize_roster_type(from_roster_type)
+                to_roster_type = _normalize_roster_type(to_roster_type)
+                if from_roster_type is None or to_roster_type is None:
                     errors.append(f"Item {i}: movimentação interna exige MAIN/DEV válidos.")
                 elif from_roster_type == to_roster_type:
                     errors.append(f"Item {i}: movimentação interna deve trocar entre MAIN e DEV.")
@@ -153,7 +359,7 @@ def validate_items_bilateral(data, item_rows: list[dict], transaction_type: str 
             pick_ids = pick_domain_ids(data, from_team_id)
             if str(asset_id) not in pick_ids:
                 errors.append(f"Item {i}: pick fora do domínio do time origem.")
-            if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION"} or same_team:
+            if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION", "DEVPROMOTION","DEVDEMOTION",} or same_team:
                 errors.append(f"Item {i}: pick não pode ser movimentada dentro do mesmo time.")
             if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
                 errors.append(f"Item {i}: dispensa não se aplica a pick.")
@@ -330,25 +536,31 @@ def save_and_apply_transaction_neon(
 
             asset_id = _item_value(item, "asset_id", "assetid")
 
-            from_team_id = _to_int(
+            item_from_team_id = _to_int(
                 _item_value(
                     item,
                     "from_team_id",
                     "fromteamid",
-                    default=tx_row.get("from_team_id", tx_row.get("fromteamid")),
+                    default=tx_row.get(
+                        "from_team_id",
+                        tx_row.get("fromteamid"),
+                    ),
                 )
             )
 
-            to_team_id = _to_int(
+            item_to_team_id = _to_int(
                 _item_value(
                     item,
                     "to_team_id",
                     "toteamid",
-                    default=tx_row.get("to_team_id", tx_row.get("toteamid")),
+                    default=tx_row.get(
+                        "to_team_id",
+                        tx_row.get("toteamid"),
+                    ),
                 )
             )
 
-            from_roster_type = _normalize_roster_type(
+            from_roster_type = _normalized_roster_type(
                 _item_value(
                     item,
                     "from_roster_type",
@@ -356,7 +568,7 @@ def save_and_apply_transaction_neon(
                 )
             )
 
-            to_roster_type = _normalize_roster_type(
+            to_roster_type = _normalized_roster_type(
                 _item_value(
                     item,
                     "to_roster_type",
@@ -364,39 +576,47 @@ def save_and_apply_transaction_neon(
                 )
             )
 
-            # -----------------------------------------------------
-            # PICKS
-            # -----------------------------------------------------
-            if item_type == "pick":
-                if tx_type in {"WAIVE", "DISPENSA", "DISMISS", "DROP"}:
-                    continue
+            if item_type in PLAYER_ITEM_TYPES:
+                source_player_id = _to_int(asset_id)
 
-                if tx_type in {
-                    "MOVE",
-                    "CALLUP",
-                    "SENDDOWN",
-                    "PROMOTION",
-                }:
-                    continue
+                if source_player_id is None:
+                    raise ValueError("Jogador inválido na transaction.")
 
-                if from_team_id is None or to_team_id is None:
-                    continue
+                if tx_type in TRADE_TRANSACTION_TYPES:
+                    if item_from_team_id is None or item_to_team_id is None:
+                        raise ValueError("Trade exige time de origem e destino.")
 
-                conn.execute(
-                    text(
-                        """
-                        UPDATE fantasy_picks
-                        SET current_team_owner_id = :to_team_id
-                        WHERE source_pick_id = :pick_id
-                          AND current_team_owner_id = :from_team_id;
-                        """
-                    ),
-                    {
-                        "pick_id": str(asset_id).strip().upper(),
-                        "from_team_id": from_team_id,
-                        "to_team_id": to_team_id,
-                    },
-                )
+                    _move_player_all_seasons(
+                        conn,
+                        source_player_id=source_player_id,
+                        from_team_id=item_from_team_id,
+                        to_team_id=item_to_team_id,
+                        roster_type=from_roster_type or "MAIN",
+                    )
+
+                elif tx_type in MOVE_TRANSACTION_TYPES:
+                    if item_from_team_id is None:
+                        raise ValueError("MOVE exige time.")
+
+                    _move_player_between_rosters_all_seasons(
+                        conn,
+                        source_player_id=source_player_id,
+                        team_id=item_from_team_id,
+                        from_roster_type=from_roster_type,
+                        to_roster_type=to_roster_type,
+                    )
+
+            elif item_type in PICK_ITEM_TYPES:
+                if tx_type in PICK_SWAP_TRANSACTION_TYPES:
+                    if item_from_team_id is None or item_to_team_id is None:
+                        raise ValueError("PICK SWAP exige time de origem e destino.")
+
+                    _swap_pick_owner(
+                        conn,
+                        source_pick_id=str(asset_id),
+                        from_team_id=item_from_team_id,
+                        to_team_id=item_to_team_id,
+                    )
 
                 continue
 

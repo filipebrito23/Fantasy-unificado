@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-
+from app_lib.transforms import SEASON_LABELS
 from app_lib.teams_ui_helpers import (
     currency,
-    get_roster_column_order,
-    get_roster_column_config,
     get_picks_column_order,
     get_picks_column_config,
 )
@@ -42,83 +40,340 @@ def _compact_team_columns(df: pd.DataFrame) -> dict:
 
 def render_main_tab(page_context: dict) -> None:
     main_roster = page_context["main_roster"]
-    main_totals = page_context["main_totals"]
-    display_main = _prepare_main_display(page_context["display_main"])
     visible_seasons = page_context["visible_seasons"]
     main_positions_text = page_context["main_positions_text"]
+    totals_by_season = page_context["totals_by_season"]
 
-    c1, c2, c3, c4,c5 = st.columns(5)
-    if not main_totals.empty:
-        current_main = main_totals.iloc[0].to_dict()
-        c1.metric("Jogadores", len(main_roster))
-        c2.metric("Salários", currency(current_main.get("Salários", 0.0)))
-        c3.metric("Multas", currency(current_main.get("Multas", 0.0)))
-        c4.metric("Disponível", currency(current_main.get("Disponível", 0.0)))
-        c5.metric("Cap restante", currency(current_main.get("Cap restante", 0.0)))
+    display_main = _prepare_main_display(
+        main_roster.copy()
+    )
 
-    st.caption(f"Posições: {main_positions_text}")
+    c1, c2, c3, c4, c5 = st.columns(5)
+
+    first_season = visible_seasons[0]
+    first_totals = totals_by_season[
+        first_season
+    ]["main"]
+
+    if not first_totals.empty:
+        current_main = first_totals.iloc[0].to_dict()
+
+        c1.metric(
+            "Jogadores",
+            len(main_roster),
+        )
+
+        c2.metric(
+            "Salários",
+            currency(
+                current_main.get(
+                    "Salários",
+                    0.0,
+                )
+            ),
+        )
+
+        c3.metric(
+            "Multas",
+            currency(
+                current_main.get(
+                    "Multas",
+                    0.0,
+                )
+            ),
+        )
+
+        c4.metric(
+            "Disponível",
+            currency(
+                current_main.get(
+                    "Disponível",
+                    0.0,
+                )
+            ),
+        )
+
+        c5.metric(
+            "Cap restante",
+            currency(
+                current_main.get(
+                    "Cap restante",
+                    0.0,
+                )
+            ),
+        )
+
+    st.caption(
+        f"Posições: {main_positions_text}"
+    )
+
+    roster_column_order = [
+        "Jogador",
+        "Posição",
+    ]
+
+    for season in visible_seasons:
+        roster_column_order.extend(
+            [
+                f"Salário {season}",
+                f"Option {season}",
+            ]
+        )
+
+    roster_column_order = [
+        column
+        for column in roster_column_order
+        if column in display_main.columns
+    ]
+
+    roster_column_config = {
+        "Jogador": st.column_config.TextColumn(
+            "Jogador",
+            width="medium",
+        ),
+        "Posição": st.column_config.TextColumn(
+            "Posição",
+            width="small",
+        ),
+    }
+
+    for season in visible_seasons:
+        salary_column = f"Salário {season}"
+        option_column = f"Option {season}"
+
+        if salary_column in display_main.columns:
+            roster_column_config[salary_column] = (
+                st.column_config.NumberColumn(
+                    SEASON_LABELS.get(
+                        season,
+                        season,
+                    ),
+                    format="US$ %,0f",
+                    disabled=True,
+                )
+            )
+
+        if option_column in display_main.columns:
+            roster_column_config[option_column] = (
+                st.column_config.CheckboxColumn(
+                    "Option",
+                    disabled=True,
+                )
+            )
 
     st.dataframe(
         display_main,
         use_container_width=True,
         hide_index=True,
-        column_order=[
-            col
-            for col in get_roster_column_order(
-                display_main,
-                visible_seasons,
-            )
-            if col != "Ordem"
-        ],
-        column_config={**_compact_team_columns(display_main), **get_roster_column_config(visible_seasons)},
+        column_order=roster_column_order,
+        column_config=roster_column_config,
     )
 
-    with st.expander("Totalizadores do elenco principal", expanded=False):
-        main_totals_display = main_totals.copy()
-        for col in ["Salários", "Multas", "Disponível", "Cap restante"]:
-            if col in main_totals_display.columns:
-                main_totals_display[col] = main_totals_display[col].apply(currency)
-        st.dataframe(main_totals_display, use_container_width=True, hide_index=True)
+    with st.expander(
+        "Totalizadores do elenco principal",
+        expanded=True,
+    ):
+        totals_frames = []
+
+        for season in visible_seasons:
+            season_totals = totals_by_season[
+                season
+            ]["main"].copy()
+
+            if not season_totals.empty:
+                totals_frames.append(
+                    season_totals
+                )
+
+        if totals_frames:
+            main_totals_display = pd.concat(
+                totals_frames,
+                ignore_index=True,
+            )
+
+            for column in [
+                "Salários",
+                "Multas",
+                "Disponível",
+                "Cap restante",
+            ]:
+                if column in main_totals_display.columns:
+                    main_totals_display[column] = (
+                        main_totals_display[column]
+                        .map(currency)
+                    )
+
+            st.dataframe(
+                main_totals_display,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info(
+                "Não há totalizadores para exibir."
+            )
 
 
 def render_dev_tab(page_context: dict) -> None:
     dev_roster = page_context["dev_roster"]
-    dev_totals = page_context["dev_totals"]
-    display_dev = page_context["display_dev"]
     visible_seasons = page_context["visible_seasons"]
     dev_positions_text = page_context["dev_positions_text"]
+    totals_by_season = page_context["totals_by_season"]
+
+    display_dev = page_context["display_dev"].copy()
 
     c1, c2, c3 = st.columns(3)
-    if not dev_totals.empty:
-        current_dev = dev_totals.iloc[0].to_dict()
-        c1.metric("Jogadores", len(dev_roster))
-        c2.metric("Salários", currency(current_dev.get("Salários", 0.0)))
-        c3.metric("Cap restante", currency(current_dev.get("Cap restante", 0.0)))
 
-    st.caption(f"Posições: {dev_positions_text}")
+    first_season = visible_seasons[0]
+    first_totals = totals_by_season[
+        first_season
+    ]["dev"]
+
+    if not first_totals.empty:
+        current_dev = first_totals.iloc[0].to_dict()
+
+        c1.metric(
+            "Jogadores",
+            len(dev_roster),
+        )
+
+        c2.metric(
+            "Salários",
+            currency(
+                current_dev.get(
+                    "Salários",
+                    0.0,
+                )
+            ),
+        )
+
+        c3.metric(
+            "Disponível",
+            currency(
+                current_dev.get(
+                    "Disponível",
+                    0.0,
+                )
+            ),
+        )
+
+    st.caption(
+        f"Posições: {dev_positions_text}"
+    )
+
+    roster_column_order = [
+        "Jogador",
+        "Posição",
+    ]
+
+    for season in visible_seasons:
+        roster_column_order.extend(
+            [
+                f"Salário {season}",
+                f"Option {season}",
+            ]
+        )
+
+    roster_column_order = [
+        column
+        for column in roster_column_order
+        if column in display_dev.columns
+    ]
+
+    roster_column_config = {
+        "Jogador": st.column_config.TextColumn(
+            "Jogador",
+            width="medium",
+        ),
+        "Posição": st.column_config.TextColumn(
+            "Posição",
+            width="small",
+        ),
+    }
+
+    for season in visible_seasons:
+        salary_column = f"Salário {season}"
+        option_column = f"Option {season}"
+
+        if salary_column in display_dev.columns:
+            roster_column_config[salary_column] = (
+                st.column_config.NumberColumn(
+                    SEASON_LABELS.get(
+                        season,
+                        season,
+                    ),
+                    format="US$ %,0f",
+                    disabled=True,
+                )
+            )
+
+        if option_column in display_dev.columns:
+            roster_column_config[option_column] = (
+                st.column_config.CheckboxColumn(
+                    "Option",
+                    disabled=True,
+                )
+            )
 
     st.dataframe(
         display_dev,
         use_container_width=True,
         hide_index=True,
-        column_order=[
-            col
-            for col in get_roster_column_order(
-                display_dev,
-                visible_seasons,
-            )
-            if col != "Ordem"
-        ],
-        column_config={**_compact_team_columns(display_dev), **get_roster_column_config(visible_seasons)},
+        column_order=roster_column_order,
+        column_config=roster_column_config,
     )
 
-    with st.expander("Totalizadores de desenvolvimento", expanded=False):
-        dev_totals_display = dev_totals.copy()
-        for col in ["Salários", "Multas","Cap restante"]:
-            if col in dev_totals_display.columns:
-                dev_totals_display[col] = dev_totals_display[col].apply(currency)
-        st.dataframe(dev_totals_display, use_container_width=True, hide_index=True)
+    with st.expander(
+        "Totalizadores de desenvolvimento",
+        expanded=True,
+    ):
+        totals_frames = []
 
+        for season in visible_seasons:
+            season_totals = totals_by_season[
+                season
+            ]["dev"].copy()
+
+            if not season_totals.empty:
+                totals_frames.append(
+                    season_totals
+                )
+
+        if totals_frames:
+            dev_totals_display = pd.concat(
+                totals_frames,
+                ignore_index=True,
+            )
+
+            dev_totals_display = (
+                dev_totals_display.drop(
+                    columns=[
+                        "Multas",
+                        "Cap restante",
+                    ],
+                    errors="ignore",
+                )
+            )
+
+            for column in [
+                "Salários",
+                "Disponível",
+            ]:
+                if column in dev_totals_display.columns:
+                    dev_totals_display[column] = (
+                        dev_totals_display[column]
+                        .map(currency)
+                    )
+
+            st.dataframe(
+                dev_totals_display,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info(
+                "Não há totalizadores para exibir."
+            )
 
 def render_picks_tab(page_context: dict) -> None:
     team_picks_df = page_context["team_picks_df"]

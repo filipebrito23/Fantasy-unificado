@@ -94,7 +94,7 @@ def _render_asset_row(
 
         with c4:
             if allow_roster_move:
-                roster_dest_options = [rt for rt in ["MAIN", "DEV"] if rt != from_roster_type]
+                roster_dest_options = [roster_type for roster_type in ["MAIN", "DEV"] if roster_type != from_roster_type]
                 to_roster_type = st.selectbox(
                     "Destino do jogador",
                     roster_dest_options,

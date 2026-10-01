@@ -10,6 +10,7 @@ from app_lib.team_tabs_ui import (
     render_dev_tab,
     render_picks_tab,
 )
+
 from app_lib.teams_page_context import build_teams_page_context
 from app_lib.teams_ui_helpers import (
     currency,
@@ -32,6 +33,59 @@ def cached_load():
     """
     return load_fantasy_data_from_neon()
 
+def render_roster_table(
+    roster_df: pd.DataFrame,
+    visible_seasons: list[str],
+) -> None:
+    columns = [
+        "Ordem",
+        "Jogador",
+        "Posição",
+    ]
+
+    for season in visible_seasons:
+        columns.extend(
+            [
+                f"Salário {season}",
+                f"Option {season}",
+            ]
+        )
+
+    columns = [
+        column
+        for column in columns
+        if column in roster_df.columns
+    ]
+
+    column_config = {}
+
+    for season in visible_seasons:
+        salary_column = f"Salário {season}"
+        option_column = f"Option {season}"
+
+        if salary_column in roster_df.columns:
+            column_config[salary_column] = (
+                st.column_config.NumberColumn(
+                    label=f"Salário {season}",
+                    format="R$ %.0f",
+                    disabled=True,
+                )
+            )
+
+        if option_column in roster_df.columns:
+            column_config[option_column] = (
+                st.column_config.CheckboxColumn(
+                    label=f"Option {season}",
+                    disabled=True,
+                )
+            )
+
+    st.dataframe(
+        roster_df[columns],
+        column_config=column_config,
+        hide_index=True,
+        use_container_width=True,
+    )
 
 def load_current_data():
     """
