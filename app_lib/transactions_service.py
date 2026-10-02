@@ -577,8 +577,9 @@ def save_and_apply_transaction_neon(
                     ),
                 )
             )
-
-            from_roster_type = _normalized_roster_type(
+            from_team_id = item_from_team_id
+            to_team_id = item_to_team_id
+            from_roster_type = _normalize_roster_type(
                 _item_value(
                     item,
                     "from_roster_type",
@@ -586,7 +587,7 @@ def save_and_apply_transaction_neon(
                 )
             )
 
-            to_roster_type = _normalized_roster_type(
+            to_roster_type = _normalize_roster_type(
                 _item_value(
                     item,
                     "to_roster_type",
@@ -837,7 +838,9 @@ def save_and_apply_transaction_neon(
                 "DROP",
             }:
                 if from_team_id is None:
-                    continue
+                    raise ValueError(
+                        "WAIVE exige time de origem."
+                    )
 
                 if from_roster_type not in {
                     "MAIN",
@@ -845,57 +848,57 @@ def save_and_apply_transaction_neon(
                 }:
                     from_roster_type = "MAIN"
 
-                conn.execute(
+                debug_result = conn.execute(
+                    text(
+                        """
+                        SELECT
+                            team_id,
+                            source_player_id,
+                            season,
+                            roster_type,
+                            is_active
+                        FROM fantasy_roster_seasons
+                        WHERE team_id = :team_id
+                          AND source_player_id =
+                              :source_player_id
+                        ORDER BY season, roster_type;
+                        """
+                    ),
+                    {
+                        "team_id": int(from_team_id),
+                        "source_player_id": int(
+                            source_player_id
+                        ),
+                    },
+                )
+
+                update_result = conn.execute(
                     text(
                         """
                         UPDATE fantasy_roster_seasons
                         SET is_active = FALSE
                         WHERE team_id = :team_id
-                        AND source_player_id = :player_id
-                        AND season = :season
-                        AND roster_type = :roster_type
-                        AND is_active = TRUE;
+                          AND source_player_id =
+                              :source_player_id
+                          AND LOWER(roster_type) =
+                              LOWER(:roster_type)
+                          AND is_active = TRUE;
                         """
                     ),
                     {
                         "team_id": int(from_team_id),
-                        "player_id": int(pid),
-                        "season": season,
+                        "source_player_id": int(
+                            source_player_id
+                        ),
                         "roster_type": from_roster_type,
                     },
                 )
 
-                continue
-
-                if from_roster_type == "DEV":
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_development
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
+                if update_result.rowcount == 0:
+                    raise ValueError(
+                        "WAIVE: nenhum registro ativo "
+                        "foi atualizado."
                     )
-                else:
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_roster
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
-                    )
-
                 continue
 
             # ADD / SIGN

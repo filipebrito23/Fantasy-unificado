@@ -246,6 +246,10 @@ def render_dev_tab(page_context: dict) -> None:
 
     display_dev = page_context["display_dev"].copy()
 
+    display_dev = _format_salary_columns(
+    display_dev,
+    visible_seasons,)
+
     c1, c2, c3 = st.columns(3)
 
     first_season = visible_seasons[0]
@@ -321,14 +325,13 @@ def render_dev_tab(page_context: dict) -> None:
 
         if salary_column in display_dev.columns:
             roster_column_config[salary_column] = (
-                st.column_config.NumberColumn(
+                st.column_config.TextColumn(
                     SEASON_LABELS.get(
                         season,
                         season,
                     ),
-                    format="Text",
-                    disabled=True,
-                )
+                        width="medium",
+                    )
             )
 
         if option_column in display_dev.columns:
