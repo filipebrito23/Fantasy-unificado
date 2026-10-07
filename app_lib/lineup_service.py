@@ -72,91 +72,120 @@ def slots_allowed_for_position(position: str) -> Set[str]:
 # -----------------------------------------------------------------------------
 
 
-def load_roster_main(team_id: int) -> pd.DataFrame:
+def load_roster_main(
+    team_id: int,
+) -> pd.DataFrame:
     """
-    Carrega o elenco principal (main) de um time a partir do roster.xlsx.
-    Retorna DataFrame com colunas: player_id, Jogador (nome), etc.
+    Carrega o elenco MAIN ativo diretamente do Neon.
+    Retorna uma linha por jogador e temporada.
     """
-    if not ROSTER_FILE.exists():
-        raise FileNotFoundError(f"Arquivo {ROSTER_FILE} não encontrado.")
 
-    df_roster = pd.read_excel(ROSTER_FILE, sheet_name="roster")
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                """
+                SELECT
+                    frs.team_id,
+                    frs.source_player_id,
+                    frs.season,
+                    frs.roster_type,
+                    frs.roster_order,
+                    frs.salary,
+                    frs.team_option,
+                    fp.player_name,
+                    fp.position
+                FROM fantasy_roster_seasons frs
+                JOIN fantasy_players fp
+                    ON fp.source_player_id =
+                       frs.source_player_id
+                WHERE frs.team_id = :team_id
+                  AND LOWER(frs.roster_type) = 'main'
+                  AND frs.is_active = TRUE
+                ORDER BY
+                    frs.roster_order NULLS LAST,
+                    fp.player_name
+                """
+            ),
+            {
+                "team_id": int(team_id),
+            },
+        )
 
-    # Filtra apenas roster principal do time
-    df_main = df_roster[
-        (df_roster["team_id"] == team_id)
-    ].copy()
-
-    if df_main.empty:
-        return df_main
-
-    # Garante player_id como int
-    if "player_id" in df_main.columns:
-        df_main["player_id"] = pd.to_numeric(df_main["player_id"], errors="coerce").fillna(0).astype(int)
-
-    return df_main
+        return pd.DataFrame(
+            result.fetchall(),
+            columns=result.keys(),
+        )
 
 
 def load_players_df() -> pd.DataFrame:
     """
-    Carrega a aba 'players' do roster_vf.xlsx.
-    Retorna DataFrame com colunas: player_id, position, etc.
+    Mantido por compatibilidade.
+    Os jogadores usados na escalação vêm diretamente
+    de fantasy_roster_seasons + fantasy_players.
     """
-    if not ROSTER_FILE.exists():
-        raise FileNotFoundError(f"Arquivo {ROSTER_FILE} não encontrado.")
-
-    df_players = pd.read_excel(ROSTER_FILE, sheet_name="players")
-
-    if "player_id" in df_players.columns:
-        df_players["player_id"] = pd.to_numeric(df_players["player_id"], errors="coerce").fillna(0).astype(int)
-
-    return df_players
+    return pd.DataFrame(
+        columns=[
+            "source_player_id",
+            "player_name",
+            "position",
+        ]
+    )
 
 
-def build_elenco_principal_dict(team_id: int) -> Dict[int, Dict[str, Any]]:
+def build_elenco_principal_dict(
+    team_id: int,
+) -> Dict[int, Dict[str, Any]]:
     """
-    Retorna um dicionário {player_id: info_do_jogador} para o elenco principal do time.
-    info_do_jogador inclui:
-      - player_id
-      - nome
-      - position_canonical
-      - allowed_slots
+    Retorna somente jogadores MAIN ativos do Neon.
+
+    A fonte oficial é:
+        fantasy_roster_seasons
+        fantasy_players
     """
+
     df_main = load_roster_main(team_id)
-    df_players = load_players_df()
 
     if df_main.empty:
         return {}
 
-    # Merge com players para pegar posição
-    if "player_id" in df_players.columns and "player_id" in df_main.columns:
-        df_merged = pd.merge(
-            df_main,
-            df_players[["player_id", "position"]],
-            on="player_id",
-            how="left",
-            suffixes=("_roster", "_players"),
+    elenco_dict: Dict[
+        int,
+        Dict[str, Any],
+    ] = {}
+
+    for row in df_main.itertuples(
+        index=False
+    ):
+        player_id = int(
+            row.source_player_id
         )
-    else:
-        df_merged = df_main.copy()
-        if "position" not in df_merged.columns:
-            df_merged["position"] = ""
 
-    elenco_dict: Dict[int, Dict[str, Any]] = {}
+        raw_position = str(
+            row.position or ""
+        ).strip().upper()
 
-    for _, row in df_merged.iterrows():
-        pid = int(row["player_id"])
-        nome = row.get("Jogador") or row.get("playername") or f"Jogador {pid}"
-        raw_pos = str(row.get("position", "")).upper().strip()
-        pos_canonical = normalize_position(raw_pos)
-        allowed = slots_allowed_for_position(pos_canonical)
+        position_canonical = normalize_position(
+            raw_position
+        )
 
-        elenco_dict[pid] = {
-            "player_id": pid,
-            "nome": nome,
-            "position_raw": raw_pos,
-            "position_canonical": pos_canonical,
-            "allowed_slots": allowed,
+        elenco_dict[player_id] = {
+            "player_id": player_id,
+            "nome": str(
+                row.player_name
+                or f"Jogador {player_id}"
+            ),
+            "position_raw": raw_position,
+            "position_canonical": (
+                position_canonical
+            ),
+            "allowed_slots": (
+                slots_allowed_for_position(
+                    position_canonical
+                )
+            ),
+            "season": row.season,
+            "salary": row.salary,
+            "team_option": row.team_option,
         }
 
     return elenco_dict

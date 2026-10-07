@@ -184,7 +184,7 @@ def render_team_selector(user: Dict[str, Any]) -> Optional[int]:
 
     return team_options[team_name]
 
-@st.cache_data(show_spinner=False)
+
 def get_elenco_cached(team_id: int) -> Dict[int, Dict[str, Any]]:
     """
     Carrega o elenco principal uma vez por time e mantém em cache.
@@ -242,8 +242,27 @@ def render_lineup_form(team_id: int, user: Dict[str, Any]):
             slot: None for slot in ALL_SLOTS
         }
 
-        st.session_state.escalacao_last_team_id = team_id
-        st.session_state.escalacao_lineup_state = dict(loaded_lineup)
+        active_player_ids = set(
+            elenco.keys()
+        )
+
+        loaded_lineup = {
+            slot: (
+                player_id
+                if player_id in active_player_ids
+                else None
+            )
+            for slot, player_id in loaded_lineup.items()
+        }
+
+        st.session_state.escalacao_last_team_id = (
+            team_id
+        )
+
+        st.session_state.escalacao_lineup_state = (
+            dict(loaded_lineup)
+        )
+
         st.session_state.escalacao_form_version += 1
 
     # Garante os 12 slots no estado.
@@ -495,7 +514,13 @@ def render_export_tab():
                 else:
                     # Busca nome do jogador
                     elenco = build_elenco_principal_dict(team_id)
-                    player_name = elenco.get(pid, {}).get("nome", f"Jogador {pid}")
+                    player_info = elenco.get(pid)
+
+                    player_name = (
+                        player_info["nome"]
+                        if player_info
+                        else ""
+                    )
 
                 row[team_name] = player_name
 
