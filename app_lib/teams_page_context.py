@@ -12,7 +12,7 @@ from app_lib.transforms import (
     summarize_picks_by_year,
 )
 from app_lib.roster_service import (get_team_picks,get_team_roster,get_team_roster_positions,get_team_roster_totals,get_team_fines,)
-from app_lib.transactions_service import (TX_SHEET,TX_ITEMS_SHEET,build_transactions_history,)
+from app_lib.transactions_service import (build_transactions_history,get_team_transactions_history_neon,format_team_transactions_history,)
 from app_lib.teams_ui_helpers import build_red_flags
 
 def _build_team_lookup(teams_df: pd.DataFrame) -> dict:
@@ -601,16 +601,6 @@ def build_teams_page_context(
         selected_start_season
     )
 
-    transactions_df = data.get(
-        TX_SHEET,
-        pd.DataFrame(),
-    )
-
-    transaction_items_df = data.get(
-        TX_ITEMS_SHEET,
-        pd.DataFrame(),
-    )
-
     fines_df = get_team_fines(
         selected_team_id
     )
@@ -725,23 +715,18 @@ def build_teams_page_context(
 
     total_picks = len(team_picks_df)
 
-    team_transactions_df = build_transactions_history(
-        transactions_df,
-        transaction_items_df,
-        selected_team_id,
-        team_lookup,
-        player_lookup,
+    team_transactions_raw = (
+        get_team_transactions_history_neon(
+            selected_team_id
+        )
     )
 
-    if (
-        not team_transactions_df.empty
-        and "season" in team_transactions_df.columns
-    ):
-        team_transactions_df = team_transactions_df.loc[
-            team_transactions_df["season"].astype(str)
-            == str(selected_start_season)
-        ].copy()
-
+    team_transactions_df = (
+        format_team_transactions_history(
+            team_transactions_raw,
+            selected_team_id,
+        )
+    )
     first_season = visible_seasons[0]
 
     main_totals = totals_by_season[

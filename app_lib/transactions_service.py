@@ -53,6 +53,197 @@ def _count_roster_rows(
     )
     return int(result.scalar() or 0)
 
+def get_team_transactions_history_neon(
+    team_id: int,
+) -> pd.DataFrame:
+    query = """
+        SELECT
+            ft.fantasy_transaction_id AS transaction_id,
+            ft.transaction_type,
+            ft.transaction_date,
+            ft.season,
+            ft.notes,
+            ft.from_team_id,
+            ft.to_team_id,
+            from_team.team_name AS from_team,
+            to_team.team_name AS to_team,
+
+            fti.fantasy_transaction_item_id,
+            fti.item_type,
+            fti.player_source_id,
+            fti.pick_source_id,
+            fti.from_team_id AS item_from_team_id,
+            fti.to_team_id AS item_to_team_id,
+            fti.from_roster_type,
+            fti.to_roster_type,
+
+            fp.player_name
+        FROM fantasy_transactions ft
+        LEFT JOIN fantasy_transaction_items fti
+            ON fti.fantasy_transaction_id =
+               ft.fantasy_transaction_id
+        LEFT JOIN teams from_team
+            ON from_team.team_id =
+               ft.from_team_id
+        LEFT JOIN teams to_team
+            ON to_team.team_id =
+               ft.to_team_id
+        LEFT JOIN fantasy_players fp
+            ON fp.source_player_id =
+               fti.player_source_id
+        WHERE ft.from_team_id = :team_id
+           OR ft.to_team_id = :team_id
+           OR fti.from_team_id = :team_id
+           OR fti.to_team_id = :team_id
+        ORDER BY
+            ft.transaction_date DESC,
+            ft.fantasy_transaction_id DESC,
+            fti.fantasy_transaction_item_id
+    """
+
+    with get_neon_connection() as conn:
+        result = conn.execute(
+            text(query),
+            {
+                "team_id": int(team_id),
+            },
+        )
+
+        return pd.DataFrame(
+            result.fetchall(),
+            columns=result.keys(),
+        )
+
+def format_team_transactions_history(
+    history_df: pd.DataFrame,
+    selected_team_id: int,
+) -> pd.DataFrame:
+    columns = [
+        "Data",
+        "Temporada",
+        "Tipo",
+        "Origem",
+        "Destino",
+        "Enviado",
+        "Recebido",
+        "Itens",
+        "Observações",
+    ]
+
+    if history_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    grouped_rows = []
+
+    group_columns = [
+        "transaction_id",
+        "transaction_type",
+        "transaction_date",
+        "season",
+        "notes",
+        "from_team_id",
+        "to_team_id",
+        "from_team",
+        "to_team",
+    ]
+
+    for group_key, group_df in history_df.groupby(
+        group_columns,
+        dropna=False,
+        sort=False,
+    ):
+        (
+            transaction_id,
+            transaction_type,
+            transaction_date,
+            season,
+            notes,
+            from_team_id,
+            to_team_id,
+            from_team,
+            to_team,
+        ) = group_key
+
+        sent_items = []
+        received_items = []
+        all_items = []
+
+        for item in group_df.itertuples(index=False):
+            if item.item_type == "player":
+                label = (
+                    item.player_name
+                    or f"Jogador #{item.player_source_id}"
+                )
+
+            elif item.item_type == "pick":
+                label = (
+                    item.pick_source_id
+                    or "Pick"
+                )
+
+            else:
+                label = "Item não identificado"
+
+            from_roster = (
+                item.from_roster_type
+                or "-"
+            )
+
+            to_roster = (
+                item.to_roster_type
+                or "-"
+            )
+
+            if (
+                from_roster != "-"
+                or to_roster != "-"
+            ):
+                label = (
+                    f"{label} "
+                    f"[{from_roster} → {to_roster}]"
+                )
+
+            all_items.append(label)
+
+            item_from_team_id = item.item_from_team_id
+            item_to_team_id = item.item_to_team_id
+
+            if item_from_team_id == selected_team_id:
+                sent_items.append(label)
+
+            if item_to_team_id == selected_team_id:
+                received_items.append(label)
+
+        grouped_rows.append(
+            {
+                "Data": transaction_date,
+                "Temporada": season,
+                "Tipo": transaction_type,
+                "Origem": from_team or "-",
+                "Destino": to_team or "-",
+                "Enviado": " | ".join(sent_items) or "-",
+                "Recebido": " | ".join(received_items) or "-",
+                "Itens": " | ".join(all_items) or "-",
+                "Observações": notes or "",
+                "_transaction_id": transaction_id,
+            }
+        )
+
+    output = pd.DataFrame(grouped_rows)
+
+    return (
+        output.sort_values(
+            by=[
+                "Data",
+                "_transaction_id",
+            ],
+            ascending=False,
+            kind="stable",
+        )
+        .drop(columns="_transaction_id")
+        .reset_index(drop=True)
+    )
+
 def _move_player_all_seasons(
     conn,
     *,
