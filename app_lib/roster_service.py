@@ -50,7 +50,7 @@ def _pick_year(season: str) -> int:
     return int(str(season).split("-", 1)[0])
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=15, show_spinner=False)
 def get_team_roster(
     team_id: int,
     season: str,
@@ -92,8 +92,185 @@ def get_team_roster(
         },
     )
 
+@st.cache_data(ttl=15, show_spinner=False)
+def get_team_roster_seasons(
+    team_id: int,
+    seasons: tuple[str, ...],
+    roster_type: str = "MAIN",
+) -> pd.DataFrame:
+    """
+    Busca o elenco ativo de várias temporadas em uma única consulta.
+    """
 
-@st.cache_data(ttl=60, show_spinner=False)
+    if not seasons:
+        return pd.DataFrame()
+
+    return _read_sql(
+        """
+        SELECT
+            frs.team_id,
+            frs.source_player_id,
+            frs.season,
+            frs.roster_type,
+            frs.roster_order,
+            frs.salary,
+            frs.team_option,
+            frs.is_active,
+            fp.player_name,
+            fp.position,
+            t.team_name
+        FROM fantasy_roster_seasons frs
+        JOIN fantasy_players fp
+            ON fp.source_player_id =
+               frs.source_player_id
+        JOIN teams t
+            ON t.team_id = frs.team_id
+        WHERE frs.team_id = :team_id
+          AND frs.season = ANY(
+              CAST(:seasons AS text[])
+          )
+          AND frs.roster_type = :roster_type
+          AND frs.is_active = TRUE
+        ORDER BY
+            frs.season,
+            frs.roster_order NULLS LAST,
+            fp.player_name
+        """,
+        {
+            "team_id": int(team_id),
+            "seasons": list(seasons),
+            "roster_type": _db_roster_type(
+                roster_type
+            ),
+        },
+    )
+
+@st.cache_data(ttl=15, show_spinner=False)
+def get_team_roster_totals_seasons(
+    team_id: int,
+    seasons: tuple[str, ...],
+    roster_type: str = "MAIN",
+) -> pd.DataFrame:
+    """
+    Retorna totalizadores por temporada em uma única consulta.
+    """
+
+    if not seasons:
+        return pd.DataFrame()
+
+    db_type = _db_roster_type(
+        roster_type
+    )
+
+    cap_limit = (
+        110_000_000
+        if db_type == "main"
+        else 14_000_000
+    )
+
+    df = _read_sql(
+        """
+        SELECT
+            season,
+            COALESCE(
+                SUM(
+                    COALESCE(salary, 0)
+                ),
+                0
+            ) AS salary_total,
+            COUNT(*) AS player_count,
+            COUNT(*) FILTER (
+                WHERE team_option = TRUE
+            ) AS option_count
+        FROM fantasy_roster_seasons
+        WHERE team_id = :team_id
+          AND season = ANY(
+              CAST(:seasons AS text[])
+          )
+          AND roster_type = :roster_type
+          AND is_active = TRUE
+        GROUP BY season
+        ORDER BY season
+        """,
+        {
+            "team_id": int(team_id),
+            "seasons": list(seasons),
+            "roster_type": db_type,
+        },
+    )
+
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "season",
+                "salary_total",
+                "player_count",
+                "option_count",
+                "cap_limit",
+                "cap_remaining",
+            ]
+        )
+
+    df["salary_total"] = pd.to_numeric(
+        df["salary_total"],
+        errors="coerce",
+    ).fillna(0.0)
+
+    df["cap_limit"] = float(cap_limit)
+
+    df["cap_remaining"] = (
+        df["cap_limit"]
+        - df["salary_total"]
+    ).astype(float)
+
+    return df
+
+@st.cache_data(ttl=15, show_spinner=False)
+def get_team_picks_years(
+    team_id: int,
+    years: tuple[int, ...],
+) -> pd.DataFrame:
+    """
+    Busca picks do time para vários anos em uma consulta.
+    """
+
+    if not years:
+        return pd.DataFrame()
+
+    return _read_sql(
+        """
+        SELECT
+            fp.fantasy_pick_id AS pick_id,
+            fp.source_pick_id,
+            fp.original_team_pick_id,
+            fp.round,
+            fp.year,
+            fp.current_team_owner_id,
+            original_team.team_name AS original_team_name,
+            current_team.team_name AS current_team_name
+        FROM fantasy_picks fp
+        LEFT JOIN teams original_team
+            ON original_team.team_id =
+               fp.original_team_pick_id
+        LEFT JOIN teams current_team
+            ON current_team.team_id =
+               fp.current_team_owner_id
+        WHERE fp.current_team_owner_id = :team_id
+          AND fp.year = ANY(
+              CAST(:years AS integer[])
+          )
+        ORDER BY
+            fp.year,
+            fp.round,
+            fp.source_pick_id
+        """,
+        {
+            "team_id": int(team_id),
+            "years": list(years),
+        },
+    )
+
+@st.cache_data(ttl=15, show_spinner=False)
 def get_team_roster_totals(team_id: int, season: str, roster_type: str = "MAIN") -> pd.DataFrame:
     db_type = _db_roster_type(roster_type)
     cap_limit = 110_000_000 if db_type == "main" else 14_000_000
@@ -122,7 +299,7 @@ def get_team_roster_totals(team_id: int, season: str, roster_type: str = "MAIN")
     return df
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=15, show_spinner=False)
 def get_team_picks(team_id: int, season: str) -> pd.DataFrame:
     return _read_sql(
         """
@@ -142,7 +319,7 @@ def get_team_picks(team_id: int, season: str) -> pd.DataFrame:
     )
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=15, show_spinner=False)
 def get_team_roster_positions(team_id: int, season: str, roster_type: str = "MAIN") -> dict[str, int]:
     df = get_team_roster(team_id, season, roster_type)
     if df.empty or "position" not in df.columns:
@@ -155,3 +332,6 @@ def invalidate_roster_cache() -> None:
     get_team_roster_totals.clear()
     get_team_picks.clear()
     get_team_roster_positions.clear()
+    get_team_roster_seasons.clear()
+    get_team_roster_totals_seasons.clear()
+    get_team_picks_years.clear()

@@ -11,7 +11,7 @@ from app_lib.transforms import (
     get_visible_seasons,
     summarize_picks_by_year,
 )
-from app_lib.roster_service import (get_team_picks,get_team_roster,get_team_roster_positions,get_team_roster_totals,get_team_fines,)
+from app_lib.roster_service import (get_team_fines,get_team_picks_years,get_team_roster_seasons,get_team_roster_totals_seasons,)
 from app_lib.transactions_service import (build_transactions_history,get_team_transactions_history_neon,format_team_transactions_history,)
 from app_lib.teams_ui_helpers import build_red_flags
 
@@ -536,50 +536,71 @@ def build_teams_page_context(
         data.get("players", pd.DataFrame())
     )
 
-    main_frames: list[pd.DataFrame] = []
-    dev_frames: list[pd.DataFrame] = []
-
-    for current_season in visible_seasons:
-        db_season = _normalize_season_for_db(
-            current_season
+    db_seasons = tuple(
+        _normalize_season_for_db(
+            season
         )
-
-        main_current = get_team_roster(
-            selected_team_id,
-            db_season,
-            "MAIN",
-        )
-
-        dev_current = get_team_roster(
-            selected_team_id,
-            db_season,
-            "DEV",
-        )
-
-        main_current = _prepare_roster_frame(
-            main_current,
-            current_season,
-        )
-
-        dev_current = _prepare_roster_frame(
-            dev_current,
-            current_season,
-        )
-
-        main_frames.append(main_current)
-        dev_frames.append(dev_current)
-
-    main_team_df = (
-        pd.concat(main_frames, ignore_index=True)
-        if main_frames
-        else pd.DataFrame()
+        for season in visible_seasons
     )
 
-    dev_team_df = (
-        pd.concat(dev_frames, ignore_index=True)
-        if dev_frames
-        else pd.DataFrame()
+    ui_season_by_db_season = {
+        _normalize_season_for_db(
+            season
+        ): season
+        for season in visible_seasons
+    }
+
+    main_team_df = get_team_roster_seasons(
+        selected_team_id,
+        db_seasons,
+        "MAIN",
     )
+
+    dev_team_df = get_team_roster_seasons(
+        selected_team_id,
+        db_seasons,
+        "DEV",
+    )
+
+    if not main_team_df.empty:
+        main_team_df = main_team_df.copy()
+
+        main_team_df["ui_season"] = (
+            main_team_df["season"]
+            .astype(str)
+            .map(ui_season_by_db_season)
+        )
+
+        main_team_df = _prepare_roster_frame(
+            main_team_df,
+            "",
+        )
+
+        main_team_df["ui_season"] = (
+            main_team_df["season"]
+            .astype(str)
+            .map(ui_season_by_db_season)
+        )
+
+    if not dev_team_df.empty:
+        dev_team_df = dev_team_df.copy()
+
+        dev_team_df["ui_season"] = (
+            dev_team_df["season"]
+            .astype(str)
+            .map(ui_season_by_db_season)
+        )
+
+        dev_team_df = _prepare_roster_frame(
+            dev_team_df,
+            "",
+        )
+
+        dev_team_df["ui_season"] = (
+            dev_team_df["season"]
+            .astype(str)
+            .map(ui_season_by_db_season)
+        )
 
     main_roster = _build_normalized_roster_display(
         main_team_df,
@@ -607,21 +628,53 @@ def build_teams_page_context(
     
     totals_by_season = {}
 
+    main_totals_raw_df = (
+        get_team_roster_totals_seasons(
+            selected_team_id,
+            db_seasons,
+            "MAIN",
+        )
+    )
+
+    dev_totals_raw_df = (
+        get_team_roster_totals_seasons(
+            selected_team_id,
+            db_seasons,
+            "DEV",
+        )
+    )
+
+    main_totals_by_db_season = {
+        str(row["season"]): pd.DataFrame(
+            [row]
+        )
+        for _, row in main_totals_raw_df.iterrows()
+    }
+
+    dev_totals_by_db_season = {
+        str(row["season"]): pd.DataFrame(
+            [row]
+        )
+        for _, row in dev_totals_raw_df.iterrows()
+    }
+
     for current_season in visible_seasons:
         current_db_season = _normalize_season_for_db(
             current_season
         )
 
-        main_totals_raw = get_team_roster_totals(
-            selected_team_id,
-            current_db_season,
-            "MAIN",
+        main_totals_raw = (
+            main_totals_by_db_season.get(
+                current_db_season,
+                pd.DataFrame(),
+            )
         )
 
-        dev_totals_raw = get_team_roster_totals(
-            selected_team_id,
-            current_db_season,
-            "DEV",
+        dev_totals_raw = (
+            dev_totals_by_db_season.get(
+                current_db_season,
+                pd.DataFrame(),
+            )
         )
 
         current_fines = _extract_fine_for_season(
@@ -630,36 +683,64 @@ def build_teams_page_context(
             current_season,
         )
 
-        main_fines = current_fines
-        dev_fines = current_fines
-
         main_totals = _format_totals_for_existing_ui(
             main_totals_raw,
-            fines_total=main_fines,
+            fines_total=current_fines,
             season=current_season,
+            apply_fines=True,
         )
 
         dev_totals = _format_totals_for_existing_ui(
             dev_totals_raw,
-            fines_total=dev_fines,
+            fines_total=0.0,
             season=current_season,
+            apply_fines=False,
         )
 
         totals_by_season[current_season] = {
             "main": main_totals,
             "dev": dev_totals,
         }
-
-    main_position_counts = get_team_roster_positions(
-        selected_team_id,
-        selected_db_season,
-        "MAIN",
+    first_db_season = _normalize_season_for_db(
+        visible_seasons[0]
     )
 
-    dev_position_counts = get_team_roster_positions(
-        selected_team_id,
-        selected_db_season,
-        "DEV",
+    main_first_season_df = main_team_df.loc[
+        main_team_df["season"].astype(str)
+        == first_db_season
+    ].copy()
+
+    dev_first_season_df = dev_team_df.loc[
+        dev_team_df["season"].astype(str)
+        == first_db_season
+    ].copy()
+
+    main_position_counts = (
+        main_first_season_df["position"]
+        .fillna("-")
+        .astype(str)
+        .str.strip()
+        .value_counts()
+        .to_dict()
+        if (
+            not main_first_season_df.empty
+            and "position" in main_first_season_df.columns
+        )
+        else {}
+    )
+
+    dev_position_counts = (
+        dev_first_season_df["position"]
+        .fillna("-")
+        .astype(str)
+        .str.strip()
+        .value_counts()
+        .to_dict()
+        if (
+            not dev_first_season_df.empty
+            and "position" in dev_first_season_df.columns
+        )
+        else {}
     )
 
     main_positions_text = _format_positions_text(
@@ -674,33 +755,45 @@ def build_teams_page_context(
         selected_start_season
     )
 
-    picks_frames = []
-
-    for current_season in visible_seasons:
-        current_db_season = _normalize_season_for_db(
-            current_season
+    pick_years = tuple(
+        int(
+            _normalize_season_for_db(
+                season
+            ).split(
+                "-",
+                1,
+            )[0]
         )
-
-        current_picks = get_team_picks(
-            selected_team_id,
-            current_db_season,
-        )
-
-        if not current_picks.empty:
-            current_picks = current_picks.copy()
-            current_picks["Temporada"] = (
-                current_season
-            )
-            picks_frames.append(current_picks)
-
-    team_picks_df = (
-        pd.concat(
-            picks_frames,
-            ignore_index=True,
-        )
-        if picks_frames
-        else pd.DataFrame()
+        for season in visible_seasons
     )
+
+    team_picks_df = get_team_picks_years(
+        selected_team_id,
+        pick_years,
+    )
+
+    if not team_picks_df.empty:
+        team_picks_df = team_picks_df.copy()
+
+        ui_season_by_pick_year = {
+            int(
+                _normalize_season_for_db(
+                    season
+                ).split(
+                    "-",
+                    1,
+                )[0]
+            ): season
+            for season in visible_seasons
+        }
+
+        team_picks_df["Temporada"] = (
+            pd.to_numeric(
+                team_picks_df["year"],
+                errors="coerce",
+            )
+            .map(ui_season_by_pick_year)
+        )
 
     pick_year_counts = (
         summarize_picks_by_year(team_picks_df)
