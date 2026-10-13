@@ -353,27 +353,49 @@ def _swap_pick_owner(
     source_pick_id: str,
     from_team_id: int,
     to_team_id: int,
-) -> None:
+) -> int:
+    normalized_pick_id = str(
+        source_pick_id or ""
+    ).strip()
+
+    if not normalized_pick_id:
+        raise ValueError(
+            "Pick inválida na transação."
+        )
+
     result = conn.execute(
         text(
             """
             UPDATE fantasy_picks
             SET current_team_owner_id = :to_team_id
-            WHERE source_pick_id = :source_pick_id
-              AND current_team_owner_id = :from_team_id
+            WHERE TRIM(source_pick_id) =
+                  :source_pick_id
+              AND current_team_owner_id =
+                  :from_team_id
             """
         ),
         {
-            "source_pick_id": str(source_pick_id).strip(),
+            "source_pick_id": normalized_pick_id,
             "from_team_id": int(from_team_id),
             "to_team_id": int(to_team_id),
         },
     )
 
-    if int(result.rowcount or 0) != 1:
+    changed_rows = int(
+        result.rowcount or 0
+    )
+
+    if changed_rows != 1:
         raise ValueError(
-            f"Pick {source_pick_id} não encontrada no time {from_team_id}."
+            "Pick não encontrada ou já não pertence "
+            "ao time de origem. "
+            f"source_pick_id={normalized_pick_id}, "
+            f"from_team_id={from_team_id}, "
+            f"to_team_id={to_team_id}, "
+            f"linhas_alteradas={changed_rows}"
         )
+
+    return changed_rows
 
 def _to_int(value):
     try:
@@ -424,51 +446,83 @@ def _item_value(item, *keys, default=None):
     return default
 
 
-def roster_domain_ids(data, team_id: int, roster_type: str | None = None) -> set:
-    ids = set()
-    sheet_names = ["roster", "development"]
-    roster_type = _normalize_roster_type(roster_type)
-    if roster_type == "MAIN":
-        sheet_names = ["roster"]
-    elif roster_type == "DEV":
-        sheet_names = ["development"]
+def roster_domain_ids(
+    data,
+    team_id: int,
+    roster_type: str | None = None,
+) -> set[int]:
+    """
+    Retorna jogadores ativos do Neon.
 
-    for sheet in sheet_names:
-        df = data.get(sheet, pd.DataFrame())
-        if df.empty or not {"team_id", "player_id"}.issubset(df.columns):
-            continue
-        team_ids = pd.to_numeric(df["team_id"], errors="coerce")
-        player_ids = pd.to_numeric(df["player_id"], errors="coerce")
-        mask = team_ids.eq(team_id) & player_ids.notna()
-        ids |= set(player_ids.loc[mask].astype(int).tolist())
-    return ids
-
-
-def pick_domain_ids(data, team_id: int) -> set:
-    picks = data.get("picks", pd.DataFrame())
-
-    if picks.empty:
-        return set()
-
-    required_columns = {"pick_id", "current_team_owner_id"}
-
-    if not required_columns.issubset(picks.columns):
-        return set()
-
-    owner_ids = pd.to_numeric(
-        picks["current_team_owner_id"],
-        errors="coerce",
+    O parâmetro data é mantido temporariamente apenas para não quebrar
+    chamadas existentes. Ele não é mais usado.
+    """
+    db_roster_type = _db_roster_type(
+        roster_type
     )
 
-    valid_mask = owner_ids.notna() & owner_ids.eq(int(team_id))
+    query = """
+        SELECT DISTINCT
+            source_player_id
+        FROM fantasy_roster_seasons
+        WHERE team_id = :team_id
+          AND is_active = TRUE
+    """
 
-    return set(
-        picks.loc[valid_mask, "pick_id"]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .tolist()
-    )
+    params = {
+        "team_id": int(team_id),
+    }
+
+    if db_roster_type is not None:
+        query += """
+          AND LOWER(roster_type) =
+              LOWER(:roster_type)
+        """
+
+        params["roster_type"] = db_roster_type
+
+    with get_neon_connection() as conn:
+        result = conn.execute(
+            text(query),
+            params,
+        )
+
+        return {
+            int(row.source_player_id)
+            for row in result.fetchall()
+        }
+
+
+def pick_domain_ids(
+    data,
+    team_id: int,
+) -> set[str]:
+    """
+    Retorna source_pick_id das picks atualmente pertencentes ao time.
+
+    O parâmetro data é mantido temporariamente por compatibilidade,
+    mas a fonte oficial agora é fantasy_picks no Neon.
+    """
+    with get_neon_connection() as conn:
+        result = conn.execute(
+            text(
+                """
+                SELECT
+                    source_pick_id
+                FROM fantasy_picks
+                WHERE current_team_owner_id = :team_id
+                """
+            ),
+            {
+                "team_id": int(team_id),
+            },
+        )
+
+        return {
+            str(row.source_pick_id).strip()
+            for row in result.fetchall()
+            if row.source_pick_id is not None
+        }
 
 
 def validate_items(data, from_team_id: int, item_rows: list[dict]) -> list[str]:
@@ -484,7 +538,8 @@ def validate_items(data, from_team_id: int, item_rows: list[dict]) -> list[str]:
             if asset_id_int is None or asset_id_int not in player_ids:
                 errors.append(f"Item {i}: jogador fora do domínio do time origem.")
         elif item_type == "pick":
-            if str(asset_id) not in pick_ids:
+            pick_id = str(asset_id or "").strip()
+            if pick_id not in pick_ids:
                 errors.append(f"Item {i}: pick fora do domínio do time origem.")
         else:
             errors.append(f"Item {i}: tipo de asset inválido.")
@@ -548,7 +603,8 @@ def validate_items_bilateral(data, item_rows: list[dict], transaction_type: str 
                 errors.append(f"Item {i}: pick exige time de origem.")
                 continue
             pick_ids = pick_domain_ids(data, from_team_id)
-            if str(asset_id) not in pick_ids:
+            pick_id = str(asset_id or "").strip()
+            if pick_id not in pick_ids:
                 errors.append(f"Item {i}: pick fora do domínio do time origem.")
             if tx_type in {"MOVE", "CALLUP", "SENDDOWN", "PROMOTION", "DEVPROMOTION","DEVDEMOTION",} or same_team:
                 errors.append(f"Item {i}: pick não pode ser movimentada dentro do mesmo time.")
@@ -736,14 +792,29 @@ def save_and_apply_transaction_neon(
                 },
             )
         # ---------------------------------------------------------
-        # Aplicar efeitos no roster / development / picks
+        # Aplicar efeitos no Neon
+        #
+        # Fonte oficial:
+        # - jogadores: fantasy_roster_seasons
+        # - picks: fantasy_picks
+        #
+        # Não usar fantasy_roster nem fantasy_development aqui.
         # ---------------------------------------------------------
         for item in item_rows:
             item_type = str(
-                _item_value(item, "item_type", "itemtype", default="")
+                _item_value(
+                    item,
+                    "item_type",
+                    "itemtype",
+                    default="",
+                )
             ).strip().lower()
 
-            asset_id = _item_value(item, "asset_id", "assetid")
+            asset_id = _item_value(
+                item,
+                "asset_id",
+                "assetid",
+            )
 
             item_from_team_id = _to_int(
                 _item_value(
@@ -768,8 +839,7 @@ def save_and_apply_transaction_neon(
                     ),
                 )
             )
-            from_team_id = item_from_team_id
-            to_team_id = item_to_team_id
+
             from_roster_type = _normalize_roster_type(
                 _item_value(
                     item,
@@ -786,27 +856,69 @@ def save_and_apply_transaction_neon(
                 )
             )
 
+            # -----------------------------------------------------
+            # JOGADORES
+            # -----------------------------------------------------
             if item_type in PLAYER_ITEM_TYPES:
-                source_player_id = _to_int(asset_id)
+                source_player_id = _to_int(
+                    asset_id
+                )
 
                 if source_player_id is None:
-                    raise ValueError("Jogador inválido na transaction.")
+                    raise ValueError(
+                        "Jogador inválido na transaction."
+                    )
 
+                # -------------------------------------------------
+                # TRADE
+                # Move o jogador entre times para todas as seasons.
+                # -------------------------------------------------
                 if tx_type in TRADE_TRANSACTION_TYPES:
-                    if item_from_team_id is None or item_to_team_id is None:
-                        raise ValueError("Trade exige time de origem e destino.")
+                    if (
+                        item_from_team_id is None
+                        or item_to_team_id is None
+                    ):
+                        raise ValueError(
+                            "Trade exige time de origem "
+                            "e destino."
+                        )
 
                     _move_player_all_seasons(
                         conn,
                         source_player_id=source_player_id,
                         from_team_id=item_from_team_id,
                         to_team_id=item_to_team_id,
-                        roster_type=from_roster_type or "MAIN",
+                        roster_type=(
+                            from_roster_type
+                            or "MAIN"
+                        ),
                     )
 
-                elif tx_type in MOVE_TRANSACTION_TYPES:
+                    continue
+
+                # -------------------------------------------------
+                # MOVE / CALLUP / SENDDOWN / PROMOTION
+                # Move entre MAIN e DEV do mesmo time,
+                # para todas as seasons.
+                # -------------------------------------------------
+                if tx_type in MOVE_TRANSACTION_TYPES:
                     if item_from_team_id is None:
-                        raise ValueError("MOVE exige time.")
+                        raise ValueError(
+                            "Movimentação exige time "
+                            "de origem."
+                        )
+
+                    if from_roster_type is None:
+                        raise ValueError(
+                            "Movimentação exige elenco "
+                            "de origem MAIN ou DEV."
+                        )
+
+                    if to_roster_type is None:
+                        raise ValueError(
+                            "Movimentação exige elenco "
+                            "de destino MAIN ou DEV."
+                        )
 
                     _move_player_between_rosters_all_seasons(
                         conn,
@@ -816,552 +928,133 @@ def save_and_apply_transaction_neon(
                         to_roster_type=to_roster_type,
                     )
 
-            elif item_type in PICK_ITEM_TYPES:
-                if tx_type in PICK_SWAP_TRANSACTION_TYPES:
-                    if item_from_team_id is None or item_to_team_id is None:
-                        raise ValueError("PICK SWAP exige time de origem e destino.")
-
-                    _swap_pick_owner(
-                        conn,
-                        source_pick_id=str(asset_id),
-                        from_team_id=item_from_team_id,
-                        to_team_id=item_to_team_id,
-                    )
-
-                continue
-
-            # -----------------------------------------------------
-            # JOGADORES
-            # -----------------------------------------------------
-            if item_type != "player":
-                continue
-
-            pid = _to_int(asset_id)
-
-            if pid is None:
-                continue
-
-            # -------------------------------------------------
-            # Busca os salários e opções no roster de origem
-            # -------------------------------------------------
-            if from_roster_type == "DEV":
-                source_table = "fantasy_development"
-            else:
-                source_table = "fantasy_roster"
-
-            player_result = conn.execute(
-                text(
-                    f"""
-                    SELECT
-                        salarie_26_27,
-                        option_26_27,
-                        salarie_27_28,
-                        option_27_28,
-                        salarie_28_29,
-                        option_28_29,
-                        salarie_29_30,
-                        option_29_30
-                    FROM {source_table}
-                    WHERE source_player_id = :player_id
-                      AND team_id = :team_id;
-                    """
-                ),
-                {
-                    "player_id": pid,
-                    "team_id": from_team_id,
-                },
-            )
-
-            player_row = player_result.fetchone()
-
-            if player_row is None:
-                # Jogador não encontrado no roster de origem; pula para evitar erro.
-                continue
-
-            salarie_26_27 = player_row[0]
-            option_26_27 = player_row[1]
-            salarie_27_28 = player_row[2]
-            option_27_28 = player_row[3]
-            salarie_28_29 = player_row[4]
-            option_28_29 = player_row[5]
-            salarie_29_30 = player_row[6]
-            option_29_30 = player_row[7]
-
-            # TRADE
-            if tx_type == "TRADE":
-                if from_team_id is None or to_team_id is None:
                     continue
 
-                if to_roster_type not in {"MAIN", "DEV"}:
-                    to_roster_type = "MAIN"
-
-                # Remove da origem
-                if from_roster_type == "DEV":
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_development
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
-                    )
-                else:
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_roster
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
-                    )
-
-                # Insere no destino
-                if to_roster_type == "DEV":
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO fantasy_development (
-                                team_id,
-                                source_player_id,
-                                salarie_26_27,
-                                option_26_27,
-                                salarie_27_28,
-                                option_27_28,
-                                salarie_28_29,
-                                option_28_29,
-                                salarie_29_30,
-                                option_29_30,
-                                source_sheet
-                            )
-                            VALUES (
-                                :team_id,
-                                :player_id,
-                                :salarie_26_27,
-                                :option_26_27,
-                                :salarie_27_28,
-                                :option_27_28,
-                                :salarie_28_29,
-                                :option_28_29,
-                                :salarie_29_30,
-                                :option_29_30,
-                                :source_sheet
-                            );
-                            """
-                        ),
-                        {
-                            "team_id": to_team_id,
-                            "player_id": pid,
-                            "salarie_26_27": salarie_26_27,
-                            "option_26_27": option_26_27,
-                            "salarie_27_28": salarie_27_28,
-                            "option_27_28": option_27_28,
-                            "salarie_28_29": salarie_28_29,
-                            "option_28_29": option_28_29,
-                            "salarie_29_30": salarie_29_30,
-                            "option_29_30": option_29_30,
-                            "source_sheet": "development",
-                        },
-                    )
-                else:
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO fantasy_roster (
-                                team_id,
-                                source_player_id,
-                                salarie_26_27,
-                                option_26_27,
-                                salarie_27_28,
-                                option_27_28,
-                                salarie_28_29,
-                                option_28_29,
-                                salarie_29_30,
-                                option_29_30,
-                                source_sheet
-                            )
-                            VALUES (
-                                :team_id,
-                                :player_id,
-                                :salarie_26_27,
-                                :option_26_27,
-                                :salarie_27_28,
-                                :option_27_28,
-                                :salarie_28_29,
-                                :option_28_29,
-                                :salarie_29_30,
-                                :option_29_30,
-                                :source_sheet
-                            );
-                            """
-                        ),
-                        {
-                            "team_id": to_team_id,
-                            "player_id": pid,
-                            "salarie_26_27": salarie_26_27,
-                            "option_26_27": option_26_27,
-                            "salarie_27_28": salarie_27_28,
-                            "option_27_28": option_27_28,
-                            "salarie_28_29": salarie_28_29,
-                            "option_28_29": option_28_29,
-                            "salarie_29_30": salarie_29_30,
-                            "option_29_30": option_29_30,
-                            "source_sheet": "roster",
-                        },
-                    )
-
-                continue
-
-            # WAIVE
-            if tx_type in {
-                "WAIVE",
-                "DISPENSA",
-                "DISMISS",
-                "DROP",
-            }:
-                if from_team_id is None:
-                    raise ValueError(
-                        "WAIVE exige time de origem."
-                    )
-
-                if from_roster_type not in {
-                    "MAIN",
-                    "DEV",
+                # -------------------------------------------------
+                # WAIVE / DISPENSA
+                # Mantém o histórico e torna o jogador inativo.
+                # -------------------------------------------------
+                if tx_type in {
+                    "WAIVE",
+                    "DISPENSA",
+                    "DISMISS",
+                    "DROP",
                 }:
-                    from_roster_type = "MAIN"
+                    if item_from_team_id is None:
+                        raise ValueError(
+                            "WAIVE exige time de origem."
+                        )
 
-                debug_result = conn.execute(
-                    text(
-                        """
-                        SELECT
-                            team_id,
-                            source_player_id,
-                            season,
-                            roster_type,
-                            is_active
-                        FROM fantasy_roster_seasons
-                        WHERE team_id = :team_id
-                          AND source_player_id =
-                              :source_player_id
-                        ORDER BY season, roster_type;
-                        """
-                    ),
-                    {
-                        "team_id": int(from_team_id),
-                        "source_player_id": int(
-                            source_player_id
+                    db_roster_type = _db_roster_type(
+                        from_roster_type or "MAIN"
+                    )
+
+                    if db_roster_type is None:
+                        raise ValueError(
+                            "WAIVE exige elenco válido: "
+                            "MAIN ou DEV."
+                        )
+
+                    update_result = conn.execute(
+                        text(
+                            """
+                            UPDATE fantasy_roster_seasons
+                            SET is_active = FALSE
+                            WHERE team_id = :team_id
+                              AND source_player_id =
+                                  :source_player_id
+                              AND LOWER(roster_type) =
+                                  LOWER(:roster_type)
+                              AND is_active = TRUE
+                            """
                         ),
-                    },
-                )
+                        {
+                            "team_id": int(
+                                item_from_team_id
+                            ),
+                            "source_player_id": int(
+                                source_player_id
+                            ),
+                            "roster_type": db_roster_type,
+                        },
+                    )
 
-                update_result = conn.execute(
-                    text(
-                        """
-                        UPDATE fantasy_roster_seasons
-                        SET is_active = FALSE
-                        WHERE team_id = :team_id
-                          AND source_player_id =
-                              :source_player_id
-                          AND LOWER(roster_type) =
-                              LOWER(:roster_type)
-                          AND is_active = TRUE;
-                        """
-                    ),
-                    {
-                        "team_id": int(from_team_id),
-                        "source_player_id": int(
-                            source_player_id
-                        ),
-                        "roster_type": from_roster_type,
-                    },
-                )
+                    changed_rows = int(
+                        update_result.rowcount or 0
+                    )
 
-                if update_result.rowcount == 0:
+                    if changed_rows == 0:
+                        raise ValueError(
+                            "WAIVE não encontrou jogador "
+                            "ativo no elenco. "
+                            f"team_id={item_from_team_id}, "
+                            f"source_player_id="
+                            f"{source_player_id}, "
+                            f"roster_type={db_roster_type}"
+                        )
+
+                    continue
+
+                # ADD/SIGN ainda não é tratado aqui porque exige
+                # inserir dados completos no fantasy_roster_seasons:
+                # season, salary, option, roster_order e is_active.
+                if tx_type in {
+                    "ADD",
+                    "SIGN",
+                    "ASSINATURA",
+                }:
                     raise ValueError(
-                        "WAIVE: nenhum registro ativo "
-                        "foi atualizado."
-                    )
-                continue
-
-            # ADD / SIGN
-            if tx_type in {"ADD", "SIGN", "ASSINATURA"}:
-                if from_team_id is None or to_team_id is None:
-                    continue
-
-                # Remove da origem
-                if from_roster_type == "DEV":
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_development
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
-                    )
-                else:
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_roster
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
+                        "ADD/SIGN ainda não está "
+                        "configurado para a estrutura "
+                        "fantasy_roster_seasons."
                     )
 
-                # Insere no destino
-                if to_roster_type == "DEV":
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO fantasy_development (
-                                team_id,
-                                source_player_id,
-                                salarie_26_27,
-                                option_26_27,
-                                salarie_27_28,
-                                option_27_28,
-                                salarie_28_29,
-                                option_28_29,
-                                salarie_29_30,
-                                option_29_30,
-                                source_sheet
-                            )
-                            VALUES (
-                                :team_id,
-                                :player_id,
-                                :salarie_26_27,
-                                :option_26_27,
-                                :salarie_27_28,
-                                :option_27_28,
-                                :salarie_28_29,
-                                :option_28_29,
-                                :salarie_29_30,
-                                :option_29_30,
-                                :source_sheet
-                            );
-                            """
-                        ),
-                        {
-                            "team_id": to_team_id,
-                            "player_id": pid,
-                            "salarie_26_27": salarie_26_27,
-                            "option_26_27": option_26_27,
-                            "salarie_27_28": salarie_27_28,
-                            "option_27_28": option_27_28,
-                            "salarie_28_29": salarie_28_29,
-                            "option_28_29": option_28_29,
-                            "salarie_29_30": salarie_29_30,
-                            "option_29_30": option_29_30,
-                            "source_sheet": "development",
-                        },
-                    )
-                else:
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO fantasy_roster (
-                                team_id,
-                                source_player_id,
-                                salarie_26_27,
-                                option_26_27,
-                                salarie_27_28,
-                                option_27_28,
-                                salarie_28_29,
-                                option_28_29,
-                                salarie_29_30,
-                                option_29_30,
-                                source_sheet
-                            )
-                            VALUES (
-                                :team_id,
-                                :player_id,
-                                :salarie_26_27,
-                                :option_26_27,
-                                :salarie_27_28,
-                                :option_27_28,
-                                :salarie_28_29,
-                                :option_28_29,
-                                :salarie_29_30,
-                                :option_29_30,
-                                :source_sheet
-                            );
-                            """
-                        ),
-                        {
-                            "team_id": to_team_id,
-                            "player_id": pid,
-                            "salarie_26_27": salarie_26_27,
-                            "option_26_27": option_26_27,
-                            "salarie_27_28": salarie_27_28,
-                            "option_27_28": option_27_28,
-                            "salarie_28_29": salarie_28_29,
-                            "option_28_29": option_28_29,
-                            "salarie_29_30": salarie_29_30,
-                            "option_29_30": option_29_30,
-                            "source_sheet": "roster",
-                        },
+                raise ValueError(
+                    "Tipo de transaction de jogador "
+                    f"não suportado: {tx_type}"
+                )
+
+            # -----------------------------------------------------
+            # PICKS
+            # source_pick_id é o identificador estável da pick.
+            # -----------------------------------------------------
+            if item_type in PICK_ITEM_TYPES:
+                if tx_type not in PICK_SWAP_TRANSACTION_TYPES:
+                    raise ValueError(
+                        "Tipo de transaction de pick "
+                        f"não suportado: {tx_type}"
                     )
 
-                continue
-
-            # MOVE / CALLUP / SENDDOWN / PROMOTION
-            if tx_type in {
-                "MOVE",
-                "CALLUP",
-                "SENDDOWN",
-                "PROMOTION",
-            }:
                 if (
-                    from_roster_type not in {"MAIN", "DEV"}
-                    or to_roster_type not in {"MAIN", "DEV"}
-                    or from_team_id is None
+                    item_from_team_id is None
+                    or item_to_team_id is None
                 ):
-                    continue
-
-                # Remove da origem
-                if from_roster_type == "DEV":
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_development
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
-                    )
-                else:
-                    conn.execute(
-                        text(
-                            """
-                            DELETE FROM fantasy_roster
-                            WHERE source_player_id = :player_id
-                              AND team_id = :team_id;
-                            """
-                        ),
-                        {
-                            "player_id": pid,
-                            "team_id": from_team_id,
-                        },
+                    raise ValueError(
+                        "Transferência de pick exige "
+                        "time de origem e destino."
                     )
 
-                # Insere no destino (mesmo time, outro roster)
-                if to_roster_type == "DEV":
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO fantasy_development (
-                                team_id,
-                                source_player_id,
-                                salarie_26_27,
-                                option_26_27,
-                                salarie_27_28,
-                                option_27_28,
-                                salarie_28_29,
-                                option_28_29,
-                                salarie_29_30,
-                                option_29_30,
-                                source_sheet
-                            )
-                            VALUES (
-                                :team_id,
-                                :player_id,
-                                :salarie_26_27,
-                                :option_26_27,
-                                :salarie_27_28,
-                                :option_27_28,
-                                :salarie_28_29,
-                                :option_28_29,
-                                :salarie_29_30,
-                                :option_29_30,
-                                :source_sheet
-                            );
-                            """
-                        ),
-                        {
-                            "team_id": from_team_id,
-                            "player_id": pid,
-                            "salarie_26_27": salarie_26_27,
-                            "option_26_27": option_26_27,
-                            "salarie_27_28": salarie_27_28,
-                            "option_27_28": option_27_28,
-                            "salarie_28_29": salarie_28_29,
-                            "option_28_29": option_28_29,
-                            "salarie_29_30": salarie_29_30,
-                            "option_29_30": option_29_30,
-                            "source_sheet": "development",
-                        },
+                source_pick_id = str(
+                    asset_id or ""
+                ).strip()
+
+                if not source_pick_id:
+                    raise ValueError(
+                        "Pick inválida na transaction."
                     )
-                else:
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO fantasy_roster (
-                                team_id,
-                                source_player_id,
-                                salarie_26_27,
-                                option_26_27,
-                                salarie_27_28,
-                                option_27_28,
-                                salarie_28_29,
-                                option_28_29,
-                                salarie_29_30,
-                                option_29_30,
-                                source_sheet
-                            )
-                            VALUES (
-                                :team_id,
-                                :player_id,
-                                :salarie_26_27,
-                                :option_26_27,
-                                :salarie_27_28,
-                                :option_27_28,
-                                :salarie_28_29,
-                                :option_28_29,
-                                :salarie_29_30,
-                                :option_29_30,
-                                :source_sheet
-                            );
-                            """
-                        ),
-                        {
-                            "team_id": from_team_id,
-                            "player_id": pid,
-                            "salarie_26_27": salarie_26_27,
-                            "option_26_27": option_26_27,
-                            "salarie_27_28": salarie_27_28,
-                            "option_27_28": option_27_28,
-                            "salarie_28_29": salarie_28_29,
-                            "option_28_29": option_28_29,
-                            "salarie_29_30": salarie_29_30,
-                            "option_29_30": option_29_30,
-                            "source_sheet": "roster",
-                        },
-                    )
+
+                _swap_pick_owner(
+                    conn,
+                    source_pick_id=source_pick_id,
+                    from_team_id=item_from_team_id,
+                    to_team_id=item_to_team_id,
+                )
 
                 continue
+
+            raise ValueError(
+                f"Tipo de item inválido: {item_type}"
+            )
 
         # O commit é automático ao sair do with, se não houver erro.
         return fantasy_transaction_id
