@@ -167,13 +167,12 @@ def render_main_tab(page_context: dict) -> None:
 
         if salary_column in display_main.columns:
             roster_column_config[salary_column] = (
-                st.column_config.NumberColumn(
+                st.column_config.TextColumn(
                     SEASON_LABELS.get(
                         season,
                         season,
                     ),
-                    format="Text",
-                    disabled=True,
+                    width="medium",
                 )
             )
 
@@ -247,8 +246,9 @@ def render_dev_tab(page_context: dict) -> None:
     display_dev = page_context["display_dev"].copy()
 
     display_dev = _format_salary_columns(
-    display_dev,
-    visible_seasons,)
+        display_dev,
+        visible_seasons,
+    )
 
     c1, c2, c3 = st.columns(3)
 
@@ -418,11 +418,27 @@ def render_picks_tab(page_context: dict) -> None:
     for idx, (year, qty) in enumerate(sorted(pick_year_counts.items()), start=1):
         metric_cols[idx].metric(str(year), qty)
 
+    picks_column_order = [
+        "Temporada",
+        "Pick",
+        "Pick origem",
+        "Ano",
+        "Round",
+        "Time original",
+        "Time atual",
+    ]
+
+    picks_column_order = [
+        column
+        for column in picks_column_order
+        if column in picks_display.columns
+    ]
+
     st.dataframe(
         picks_display,
         use_container_width=True,
         hide_index=True,
-        column_order=get_picks_column_order(picks_display),
+        column_order=picks_column_order,
         column_config={
             **{
                 "Pick": st.column_config.TextColumn("Pick", width="small"),

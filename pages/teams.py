@@ -1,7 +1,11 @@
 import pandas as pd
 import streamlit as st
 
-from app_lib.data_loader import SEASONS
+from app_lib.season_config import (
+    ACTIVE_SEASON,
+    SEASONS,
+    SEASON_LABELS,
+)
 from app_lib.fantasy_data_service import load_fantasy_data_from_neon
 from app_lib.role_helpers import is_admin_user
 from app_lib.session_helpers import require_login_v5
@@ -18,10 +22,10 @@ from app_lib.teams_ui_helpers import (
     render_summary_card,
 )
 from app_lib.transactions_ui import render_transactions_tab
-from app_lib.transforms import SEASON_LABELS, get_team_options
+from app_lib.transforms import get_team_options
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=15, show_spinner=False)
 def cached_load():
     """
     Carrega a base de Elencos a partir do Neon.
@@ -33,59 +37,6 @@ def cached_load():
     """
     return load_fantasy_data_from_neon()
 
-def render_roster_table(
-    roster_df: pd.DataFrame,
-    visible_seasons: list[str],
-) -> None:
-    columns = [
-        "Ordem",
-        "Jogador",
-        "Posição",
-    ]
-
-    for season in visible_seasons:
-        columns.extend(
-            [
-                f"Salário {season}",
-                f"Option {season}",
-            ]
-        )
-
-    columns = [
-        column
-        for column in columns
-        if column in roster_df.columns
-    ]
-
-    column_config = {}
-
-    for season in visible_seasons:
-        salary_column = f"Salário {season}"
-        option_column = f"Option {season}"
-
-        if salary_column in roster_df.columns:
-            column_config[salary_column] = (
-                st.column_config.NumberColumn(
-                    label=f"Salário {season}",
-                    format="R$ %.0f",
-                    disabled=True,
-                )
-            )
-
-        if option_column in roster_df.columns:
-            column_config[option_column] = (
-                st.column_config.CheckboxColumn(
-                    label=f"Option {season}",
-                    disabled=True,
-                )
-            )
-
-    st.dataframe(
-        roster_df[columns],
-        column_config=column_config,
-        hide_index=True,
-        use_container_width=True,
-    )
 
 def load_current_data():
     """
@@ -124,8 +75,37 @@ if "teams_selected_team_name_v1" not in st.session_state:
 
 
 if "teams_selected_start_season_v1" not in st.session_state:
-    st.session_state.teams_selected_start_season_v1 = SEASONS[0]
+    st.session_state.teams_selected_start_season_v1 = (
+        ACTIVE_SEASON
+        if ACTIVE_SEASON in SEASONS
+        else SEASONS[0]
+    )
 
+season_key_by_label = {
+    str(label): key
+    for key, label in SEASON_LABELS.items()
+}
+
+stored_season = st.session_state.get(
+    "teams_selected_start_season_v1"
+)
+
+if stored_season in season_key_by_label:
+    st.session_state.teams_selected_start_season_v1 = (
+        season_key_by_label[stored_season]
+    )
+
+if (
+    st.session_state.get(
+        "teams_selected_start_season_v1"
+    )
+    not in SEASONS
+):
+    st.session_state.teams_selected_start_season_v1 = (
+        ACTIVE_SEASON
+        if ACTIVE_SEASON in SEASONS
+        else SEASONS[0]
+    )
 
 c1, c2 = st.columns([2, 1])
 
@@ -144,13 +124,15 @@ with c2:
         key="teams_selected_start_season_v1",
     )
 
+if selected_start_season in season_key_by_label:
+    selected_start_season = season_key_by_label[
+        selected_start_season
+    ]
 
 ctx = build_teams_page_context(
     data=data,
     selected_team_name=selected_team_name,
     selected_start_season=selected_start_season,
-    # workbook_path é mantido por compatibilidade com a assinatura atual.
-    # Não é usado para ler dados; agora todos os dados vêm do Neon.
     workbook_path=None,
 )
 
@@ -180,8 +162,15 @@ with row1[2]:
     render_summary_card("Jogadores DEV", len(dev_roster))
 
 
-salarios_main = main_summary.get("Salários", 0.0)
-disponivel = 110_000_000.00 - salarios_main
+salarios_main = main_summary.get(
+    "Salários",
+    0.0,
+)
+
+disponivel = main_summary.get(
+    "Disponível",
+    0.0,
+)
 
 
 row2 = st.columns(4)
@@ -208,13 +197,42 @@ st.subheader("Buscar jogador")
 
 
 # Junta roster/dev com players para trazer player_name
-roster_df = data["roster"].copy().assign(Elenco="MAIN")
-dev_df = data["development"].copy().assign(Elenco="DEV")
-players_df = data.get("players", pd.DataFrame())
+roster_df = data[
+    "roster"
+].copy().assign(
+    Elenco="MAIN"
+)
+
+dev_df = data[
+    "development"
+].copy().assign(
+    Elenco="DEV"
+)
+
+players_df = data.get(
+    "players",
+    pd.DataFrame(),
+)
 
 all_players = pd.concat(
-    [roster_df, dev_df],
+    [
+        roster_df,
+        dev_df,
+    ],
     ignore_index=True,
+)
+
+all_players = all_players.drop_duplicates(
+    subset=[
+        column
+        for column in [
+            "team_id",
+            "player_id",
+            "Elenco",
+        ]
+        if column in all_players.columns
+    ],
+    keep="first",
 )
 
 if (
@@ -321,7 +339,7 @@ with tab_transactions:
         player_lookup=ctx["player_lookup"],
         user=user,
         is_admin=is_admin,
-        # Ainda é mantido temporariamente porque Transactions,
-        # neste momento, continua gravando no Excel.
+        # Parâmetro mantido apenas por compatibilidade de assinatura.
+        # Transactions grava e lê dados operacionais do Neon.
         DEFAULT_FILE=None,
     )

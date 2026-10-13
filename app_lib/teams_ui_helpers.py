@@ -103,18 +103,58 @@ def get_roster_column_config(visible_seasons: list[str]) -> dict:
     return config
 
 
-def get_picks_column_order(df: pd.DataFrame) -> list[str]:
-    preferred = ["Pick", "Ano", "Round", "Time original", "Time atual"]
-    return [col for col in preferred if col in df.columns]
+def get_picks_column_order(
+    df: pd.DataFrame,
+) -> list[str]:
+    preferred = [
+        "Temporada",
+        "Pick",
+        "Pick origem",
+        "Ano",
+        "Round",
+        "Time original",
+        "Time atual",
+    ]
+
+    return [
+        column
+        for column in preferred
+        if column in df.columns
+    ]
 
 
 def get_picks_column_config() -> dict:
     return {
-        "Pick": st.column_config.TextColumn("Pick", width="small"),
-        "Ano": st.column_config.NumberColumn("Ano", width="small", format="%d"),
-        "Round": st.column_config.NumberColumn("Round", width="small", format="%d"),
-        "Time original": st.column_config.TextColumn("Time original", width="medium"),
-        "Time atual": st.column_config.TextColumn("Time atual", width="medium"),
+        "Temporada": st.column_config.TextColumn(
+            "Temporada",
+            width="small",
+        ),
+        "Pick": st.column_config.TextColumn(
+            "Pick",
+            width="small",
+        ),
+        "Pick origem": st.column_config.TextColumn(
+            "Pick origem",
+            width="medium",
+        ),
+        "Ano": st.column_config.NumberColumn(
+            "Ano",
+            width="small",
+            format="%d",
+        ),
+        "Round": st.column_config.NumberColumn(
+            "Round",
+            width="small",
+            format="%d",
+        ),
+        "Time original": st.column_config.TextColumn(
+            "Time original",
+            width="medium",
+        ),
+        "Time atual": st.column_config.TextColumn(
+            "Time atual",
+            width="medium",
+        ),
     }
 
 

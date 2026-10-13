@@ -1,13 +1,10 @@
 import pandas as pd
-from app_lib.data_loader import SEASONS, FINE_COLS
-
-SEASON_LABELS = {
-    "26_27": "2026-27",
-    "27_28": "2027-28",
-    "28_29": "2028-29",
-    "29_30": "2029-30",
-}
-
+from app_lib.season_config import (
+    ACTIVE_SEASON,
+    SEASONS,
+    SEASON_LABELS,
+)
+from app_lib.data_loader import FINE_COLS
 
 def get_team_options(teams: pd.DataFrame) -> pd.DataFrame:
     cols = [c for c in ["team_id", "team_name"] if c in teams.columns]
