@@ -11,9 +11,35 @@ def get_team_options(teams: pd.DataFrame) -> pd.DataFrame:
     return teams[cols].drop_duplicates().sort_values("team_name").reset_index(drop=True)
 
 
-def get_visible_seasons(start_season: str) -> list[str]:
-    idx = SEASONS.index(start_season)
-    return SEASONS[idx:]
+def get_visible_seasons(
+    start_season: str,
+) -> list[str]:
+    value = str(start_season or "").strip()
+
+    if value not in SEASONS:
+        season_key_by_label = {
+            str(label): key
+            for key, label in SEASON_LABELS.items()
+        }
+
+        if value in season_key_by_label:
+            value = season_key_by_label[value]
+
+    if value not in SEASONS:
+        value = ACTIVE_SEASON
+
+    if value not in SEASONS:
+        raise ValueError(
+            "Temporada inválida: "
+            f"{start_season}. "
+            f"Esperado um destes valores: {SEASONS}"
+        )
+
+    idx = SEASONS.index(value)
+
+    return SEASONS[
+        idx:idx + 4
+    ]
 
 
 def _player_lookup(players_df: pd.DataFrame) -> pd.DataFrame:

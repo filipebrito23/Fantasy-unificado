@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-
+import time
 from app_lib.season_config import (
     ACTIVE_SEASON,
     SEASONS,
@@ -25,7 +25,10 @@ from app_lib.transactions_ui import render_transactions_tab
 from app_lib.transforms import get_team_options
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(
+    ttl=900,
+    show_spinner=False,
+)
 def cached_load():
     """
     Carrega a base de Elencos a partir do Neon.
@@ -55,7 +58,15 @@ st.title("Elencos")
 st.caption("Visão geral do time e movimentações")
 
 
+start_load = time.perf_counter()
+
 data = load_current_data()
+
+load_seconds = time.perf_counter() - start_load
+
+#st.caption(
+#    f"⏱️ Carregamento Neon: {load_seconds:.2f}s"
+#)
 
 if data is None:
     st.error("Não foi possível carregar os dados de Elencos no Neon.")
@@ -124,10 +135,8 @@ with c2:
         key="teams_selected_start_season_v1",
     )
 
-if selected_start_season in season_key_by_label:
-    selected_start_season = season_key_by_label[
-        selected_start_season
-    ]
+
+start_context = time.perf_counter()
 
 ctx = build_teams_page_context(
     data=data,
@@ -135,6 +144,12 @@ ctx = build_teams_page_context(
     selected_start_season=selected_start_season,
     workbook_path=None,
 )
+
+context_seconds = time.perf_counter() - start_context
+
+#st.caption(
+#    f"⏱️ Contexto Elencos: {context_seconds:.2f}s"
+#)
 
 
 selected_team_id = ctx["selected_team_id"]
@@ -330,6 +345,8 @@ with tab_picks:
 
 
 with tab_transactions:
+    start_transactions = time.perf_counter()
+
     render_transactions_tab(
         data=data,
         teams=data["teams"],
@@ -339,7 +356,15 @@ with tab_transactions:
         player_lookup=ctx["player_lookup"],
         user=user,
         is_admin=is_admin,
-        # Parâmetro mantido apenas por compatibilidade de assinatura.
-        # Transactions grava e lê dados operacionais do Neon.
         DEFAULT_FILE=None,
+    )
+
+    transactions_seconds = (
+        time.perf_counter()
+        - start_transactions
+    )
+
+    st.caption(
+        "⏱️ Transações: "
+        f"{transactions_seconds:.2f}s"
     )
