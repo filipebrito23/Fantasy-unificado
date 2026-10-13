@@ -5,7 +5,11 @@ from typing import Any
 import pandas as pd
 
 from app_lib.excel_utils import get_next_id
-from app_lib.transactions_service import pick_domain_ids
+from app_lib.fantasy_data_service import get_neon_connection
+from app_lib.transactions_service import (
+    _db_roster_type,
+)
+from sqlalchemy import text
 
 
 def _v(row: dict[str, Any], *keys, default=None):
@@ -26,16 +30,139 @@ def get_team_id_map(teams: pd.DataFrame) -> dict[str, int]:
         return {}
     return dict(zip(teams["team_name"], teams["team_id"]))
 
+def get_active_team_players(
+    team_id: int | None,
+    roster_type: str | None,
+) -> list[dict[str, Any]]:
+    """
+    Retorna os jogadores ativos do Neon para montar selectboxes.
 
-def get_player_labels(player_lookup: dict[int, str], player_ids: list[int]) -> dict[int, str]:
-    return {int(pid): player_lookup.get(int(pid), str(pid)) for pid in player_ids}
-
-
-def get_player_ids_from_team(source_df: pd.DataFrame) -> list[int]:
-    if source_df.empty or "player_id" not in source_df.columns:
+    asset_id sempre corresponde a source_player_id, que é o mesmo
+    identificador usado em fantasy_roster_seasons e transactions.
+    """
+    if team_id is None:
         return []
-    return pd.to_numeric(source_df["player_id"], errors="coerce").dropna().astype(int).tolist()
 
+    db_roster_type = _db_roster_type(
+        roster_type
+    )
+
+    if db_roster_type is None:
+        return []
+
+    with get_neon_connection() as conn:
+        result = conn.execute(
+            text(
+                """
+                SELECT DISTINCT ON (
+                    frs.source_player_id
+                )
+                    frs.source_player_id,
+                    fp.player_name,
+                    fp.position,
+                    frs.roster_type
+                FROM fantasy_roster_seasons frs
+                JOIN fantasy_players fp
+                    ON fp.source_player_id =
+                       frs.source_player_id
+                WHERE frs.team_id = :team_id
+                  AND LOWER(frs.roster_type) =
+                      LOWER(:roster_type)
+                  AND frs.is_active = TRUE
+                ORDER BY
+                    frs.source_player_id,
+                    frs.season,
+                    fp.player_name
+                """
+            ),
+            {
+                "team_id": int(team_id),
+                "roster_type": db_roster_type,
+            },
+        )
+
+        return [
+            {
+                "asset_id": int(
+                    row.source_player_id
+                ),
+                "label": (
+                    f"{row.player_name} "
+                    f"({row.position or '-'})"
+                ),
+                "player_name": row.player_name,
+                "position": row.position,
+                "roster_type": row.roster_type,
+            }
+            for row in result.fetchall()
+        ]
+
+def get_active_team_picks(
+    team_id: int | None,
+) -> list[dict[str, Any]]:
+    """
+    Retorna picks atualmente pertencentes ao time no Neon.
+
+    asset_id é source_pick_id, pois é esse identificador que
+    _swap_pick_owner() usa ao atualizar fantasy_picks.
+    """
+    if team_id is None:
+        return []
+
+    with get_neon_connection() as conn:
+        result = conn.execute(
+            text(
+                """
+                SELECT
+                    fp.source_pick_id,
+                    fp.year,
+                    fp.round,
+                    original_team.team_name AS original_team_name
+                FROM fantasy_picks fp
+                LEFT JOIN teams original_team
+                    ON original_team.team_id =
+                       fp.original_team_pick_id
+                WHERE fp.current_team_owner_id =
+                      :team_id
+                ORDER BY
+                    fp.year,
+                    fp.round,
+                    fp.source_pick_id
+                """
+            ),
+            {
+                "team_id": int(team_id),
+            },
+        )
+
+        rows = []
+
+        for row in result.fetchall():
+            source_pick_id = str(
+                row.source_pick_id
+            ).strip()
+
+            original_team = (
+                row.original_team_name
+                or "Time original desconhecido"
+            )
+
+            rows.append(
+                {
+                    "asset_id": source_pick_id,
+                    "label": (
+                        f"{row.year} - Round {row.round} "
+                        f"- {original_team}"
+                    ),
+                    "year": row.year,
+                    "round": row.round,
+                    "original_team_name": (
+                        original_team
+                    ),
+                }
+            )
+
+        return rows
 
 def collect_valid_item_rows(all_item_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     valid_item_rows: list[dict[str, Any]] = []
@@ -171,8 +298,3 @@ def make_next_transaction_id(tx_base_df: pd.DataFrame, start: int = 1) -> tuple[
     next_id = get_next_id(tx_base_df, tx_id_col, start=start)
     return next_id, tx_id_col
 
-
-def get_pick_domain_ids_for_team(data: dict[str, pd.DataFrame], team_id: int | None) -> list[Any]:
-    if team_id is None:
-        return []
-    return sorted(pick_domain_ids(data, team_id))

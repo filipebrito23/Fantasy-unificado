@@ -67,50 +67,271 @@ def get_fantasy_players_df() -> pd.DataFrame:
 
 def get_fantasy_roster_df() -> pd.DataFrame:
     """
-    Retorna o elenco principal no mesmo formato da aba roster do Excel.
+    Retorna o elenco MAIN ativo a partir da fonte oficial do Neon:
+    fantasy_roster_seasons.
+
+    Mantém o contrato legado:
+    team_id, player_id, pos_order, order, salarie_*, option_*.
     """
+
     return _read_df(
         """
-        SELECT
-            team_id,
-            source_player_id AS player_id,
-            roster_order AS pos_order,
-            roster_order AS "order",
-            salarie_26_27,
-            option_26_27,
-            salarie_27_28,
-            option_27_28,
-            salarie_28_29,
-            option_28_29,
-            salarie_29_30,
-            option_29_30
-        FROM fantasy_roster
-        ORDER BY team_id, roster_order NULLS LAST, source_player_id
+        SELECT DISTINCT ON (
+            frs.team_id,
+            frs.source_player_id
+        )
+            frs.team_id,
+            frs.source_player_id AS player_id,
+            frs.roster_order AS pos_order,
+            frs.roster_order AS "order",
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2026-27'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_26_27,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2026-27'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_26_27,
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2027-28'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_27_28,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2027-28'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_27_28,
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2028-29'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_28_29,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2028-29'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_28_29,
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2029-30'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_29_30,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2029-30'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_29_30
+
+        FROM fantasy_roster_seasons frs
+        WHERE LOWER(frs.roster_type) = 'main'
+          AND frs.is_active = TRUE
+        ORDER BY
+            frs.team_id,
+            frs.source_player_id,
+            frs.season,
+            frs.roster_order NULLS LAST
         """
     )
 
-
 def get_fantasy_development_df() -> pd.DataFrame:
     """
-    Retorna o elenco Development no mesmo formato da aba development.
+    Retorna o elenco DEV ativo pela fonte oficial:
+    fantasy_roster_seasons.
+
+    Mantém o contrato legado:
+    team_id, player_id, pos_order, order, salarie_*, option_*.
     """
+
     return _read_df(
         """
-        SELECT
-            team_id,
-            source_player_id AS player_id,
-            roster_order AS pos_order,
-            roster_order AS "order",
-            salarie_26_27,
-            option_26_27,
-            salarie_27_28,
-            option_27_28,
-            salarie_28_29,
-            option_28_29,
-            salarie_29_30,
-            option_29_30
-        FROM fantasy_development
-        ORDER BY team_id, roster_order NULLS LAST, source_player_id
+        SELECT DISTINCT ON (
+            frs.team_id,
+            frs.source_player_id
+        )
+            frs.team_id,
+            frs.source_player_id AS player_id,
+            frs.roster_order AS pos_order,
+            frs.roster_order AS "order",
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2026-27'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_26_27,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2026-27'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_26_27,
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2027-28'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_27_28,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2027-28'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_27_28,
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2028-29'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_28_29,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2028-29'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_28_29,
+
+            MAX(
+                CASE
+                    WHEN frs.season = '2029-30'
+                    THEN frs.salary
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS salarie_29_30,
+
+            BOOL_OR(
+                CASE
+                    WHEN frs.season = '2029-30'
+                    THEN COALESCE(
+                        frs.team_option,
+                        FALSE
+                    )
+                    ELSE FALSE
+                END
+            ) OVER (
+                PARTITION BY
+                    frs.team_id,
+                    frs.source_player_id
+            ) AS option_29_30
+
+        FROM fantasy_roster_seasons frs
+        WHERE LOWER(frs.roster_type) = 'development'
+          AND frs.is_active = TRUE
+        ORDER BY
+            frs.team_id,
+            frs.source_player_id,
+            frs.season,
+            frs.roster_order NULLS LAST
         """
     )
 
@@ -136,14 +357,17 @@ def get_fantasy_fines_df() -> pd.DataFrame:
 
 def get_fantasy_picks_df() -> pd.DataFrame:
     """
-    Retorna picks no formato usado nas abas Elencos e Transactions.
+    Retorna picks atuais do Neon.
 
-    source_pick_id é exposto como pick_id.
-    current_team_owner_id é a única fonte oficial de propriedade atual.
+    pick_id permanece como alias para compatibilidade antiga.
+    source_pick_id também é retornado, pois é o identificador estável
+    usado pelas transações para mudar current_team_owner_id.
     """
     return _read_df(
         """
         SELECT
+            fantasy_pick_id,
+            source_pick_id,
             source_pick_id AS pick_id,
             original_team_pick_id,
             round,
@@ -159,14 +383,11 @@ def get_fantasy_picks_df() -> pd.DataFrame:
         """
     )
 
-
 def get_fantasy_transactions_df() -> pd.DataFrame:
-    """
-    Retorna transactions no contrato esperado pela camada atual.
-    """
     return _read_df(
         """
         SELECT
+            fantasy_transaction_id,
             source_transaction_id AS transaction_id,
             transaction_type,
             transaction_date,
@@ -178,8 +399,7 @@ def get_fantasy_transactions_df() -> pd.DataFrame:
             notes
         FROM fantasy_transactions
         ORDER BY
-            transaction_date DESC NULLS LAST,
-            source_transaction_id DESC
+            fantasy_transaction_id DESC
         """
     )
 

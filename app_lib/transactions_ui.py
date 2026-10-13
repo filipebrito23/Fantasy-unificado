@@ -12,15 +12,14 @@ from app_lib.transactions_service import (
     TX_ITEMS_SHEET,
     TX_SHEET,
     validate_items_bilateral,
-    pick_domain_ids,
     save_and_apply_transaction_neon,
 )
 from app_lib.transactions_form_helpers import (
     build_prepared_items,
     build_tx_row,
     collect_valid_item_rows,
-    get_player_ids_from_team,
-    get_player_labels,
+    get_active_team_picks,
+    get_active_team_players,
     get_team_id_map,
     get_transaction_default_team_options,
     make_next_transaction_id,
@@ -29,19 +28,6 @@ from app_lib.transactions_form_helpers import (
 )
 from app_lib.transforms import SEASON_LABELS, SEASONS
 
-
-def _get_team_player_source_df(
-    data: dict[str, pd.DataFrame],
-    team_id: int | None,
-    roster_type: str | None,
-) -> pd.DataFrame:
-    if team_id is None or roster_type is None:
-        return pd.DataFrame()
-    if roster_type == "MAIN":
-        return data["roster"].loc[data["roster"]["team_id"] == team_id].copy()
-    return data["development"].loc[data["development"]["team_id"] == team_id].copy()
-
-
 def _render_asset_row(
     *,
     prefix: str,
@@ -49,16 +35,21 @@ def _render_asset_row(
     side_label: str,
     team_name: str,
     team_id: int | None,
-    data: dict[str, pd.DataFrame],
-    player_lookup: dict[int, str],
-    pick_options: list[Any],
+    pick_options: list[dict[str, Any]],
     allow_roster_move: bool,
 ) -> dict[str, Any]:
-    st.markdown(f"**Item {i + 1} - {team_name}**")
+    st.markdown(
+        f"**Item {i + 1} - {team_name}**"
+    )
+
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        item_type = st.selectbox("Tipo", ["player", "pick"], key=f"{prefix}_item_type_{i}")
+        item_type = st.selectbox(
+            "Tipo",
+            ["player", "pick"],
+            key=f"{prefix}_item_type_{i}",
+        )
 
     from_roster_type = None
     to_roster_type = None
@@ -72,29 +63,55 @@ def _render_asset_row(
                 key=f"{prefix}_roster_type_{i}",
             )
 
-        source_df = _get_team_player_source_df(data, team_id, from_roster_type)
-        player_ids = get_player_ids_from_team(source_df)
-        player_labels = get_player_labels(player_lookup, player_ids)
+        player_options = get_active_team_players(
+            team_id,
+            from_roster_type,
+        )
+
+        player_ids = [
+            player["asset_id"]
+            for player in player_options
+        ]
+
+        player_labels = {
+            player["asset_id"]: player["label"]
+            for player in player_options
+        }
 
         with c3:
             if player_ids:
                 selected_asset = st.selectbox(
                     "Jogador",
                     options=player_ids,
-                    format_func=lambda x: player_labels.get(x, str(x)),
+                    format_func=lambda player_id: (
+                        player_labels.get(
+                            player_id,
+                            str(player_id),
+                        )
+                    ),
                     key=f"{prefix}_asset_player_{i}",
                 )
             else:
                 selected_asset = st.selectbox(
                     "Jogador",
                     options=[None],
-                    format_func=lambda x: "Sem jogadores disponíveis",
+                    format_func=lambda _: (
+                        "Sem jogadores disponíveis"
+                    ),
                     key=f"{prefix}_asset_player_empty_{i}",
                 )
 
         with c4:
             if allow_roster_move:
-                roster_dest_options = [roster_type for roster_type in ["MAIN", "DEV"] if roster_type != from_roster_type]
+                roster_dest_options = [
+                    roster_type
+                    for roster_type in [
+                        "MAIN",
+                        "DEV",
+                    ]
+                    if roster_type != from_roster_type
+                ]
+
                 to_roster_type = st.selectbox(
                     "Destino do jogador",
                     roster_dest_options,
@@ -104,7 +121,10 @@ def _render_asset_row(
                 st.selectbox(
                     "Destino do jogador",
                     ["-"],
-                    key=f"{prefix}_to_roster_type_placeholder_{i}",
+                    key=(
+                        f"{prefix}_to_roster_type_"
+                        f"placeholder_{i}"
+                    ),
                     disabled=True,
                 )
 
@@ -113,36 +133,66 @@ def _render_asset_row(
             st.selectbox(
                 "Origem do jogador",
                 ["-"],
-                key=f"{prefix}_roster_type_placeholder_{i}",
+                key=(
+                    f"{prefix}_roster_type_"
+                    f"placeholder_{i}"
+                ),
                 disabled=True,
             )
 
+        pick_ids = [
+            pick["asset_id"]
+            for pick in pick_options
+        ]
+
+        pick_labels = {
+            pick["asset_id"]: pick["label"]
+            for pick in pick_options
+        }
+
         with c3:
-            selected_asset = (
-                st.selectbox(
+            if pick_ids:
+                selected_asset = st.selectbox(
                     "Pick",
-                    options=pick_options,
+                    options=pick_ids,
+                    format_func=lambda pick_id: (
+                        pick_labels.get(
+                            pick_id,
+                            str(pick_id),
+                        )
+                    ),
                     key=f"{prefix}_asset_pick_{i}",
                 )
-                if pick_options
-                else st.selectbox(
+            else:
+                selected_asset = st.selectbox(
                     "Pick",
                     options=[None],
-                    format_func=lambda x: "Sem picks disponíveis",
-                    key=f"{prefix}_asset_pick_empty_{i}",
+                    format_func=lambda _: (
+                        "Sem picks disponíveis"
+                    ),
+                    key=(
+                        f"{prefix}_asset_pick_"
+                        f"empty_{i}"
+                    ),
                 )
-            )
 
         with c4:
             st.selectbox(
                 "Destino do jogador",
                 ["-"],
-                key=f"{prefix}_to_roster_type_placeholder_pick_{i}",
+                key=(
+                    f"{prefix}_to_roster_type_"
+                    f"placeholder_pick_{i}"
+                ),
                 disabled=True,
             )
 
     return {
-        "item_id": i + 1 if side_label == "Time A" else 100 + i + 1,
+        "item_id": (
+            i + 1
+            if side_label == "Time A"
+            else 100 + i + 1
+        ),
         "item_type": item_type,
         "asset_id": selected_asset,
         "from_team_id": team_id,
@@ -158,23 +208,25 @@ def _render_side_items(
     prefix: str,
     team_name: str,
     team_id: int | None,
-    data: dict[str, pd.DataFrame],
-    player_lookup: dict[int, str],
-    pick_options: list[Any],
+    pick_options: list[dict[str, Any]],
     allow_roster_move: bool,
     default_count: int,
 ) -> list[dict[str, Any]]:
-    st.markdown(f"### Assets do {side_label}")
+    st.markdown(
+        f"### Assets do {side_label}"
+    )
+
     side_count = st.number_input(
         f"Quantidade de assets do {side_label}",
         min_value=0,
         max_value=10,
         value=default_count,
         step=1,
-        key=f"{prefix}_side_count_v4",
+        key=f"{prefix}_side_count_v5",
     )
 
     side_items = []
+
     for i in range(int(side_count)):
         side_items.append(
             _render_asset_row(
@@ -183,12 +235,11 @@ def _render_side_items(
                 side_label=side_label,
                 team_name=team_name,
                 team_id=team_id,
-                data=data,
-                player_lookup=player_lookup,
                 pick_options=pick_options,
                 allow_roster_move=allow_roster_move,
             )
         )
+
     return side_items
 
 
@@ -284,15 +335,13 @@ def render_transactions_tab(
             tx_notes = st.text_area("Observações", key="tx_notes_v4")
 
             from_default = 1 if tx_type in {"TRADE", "WAIVE", "MOVE", "OTHER"} else 0
-            from_pick_options = pick_domain_ids(data, from_team_id) if from_team_id is not None else []
+            from_pick_options = get_active_team_picks(from_team_id)
             from_side_items = _render_side_items(
                 side_label="Time A",
                 prefix="from",
                 team_name=from_team_name,
                 team_id=from_team_id,
-                data=data,
-                player_lookup=player_lookup,
-                pick_options=sorted(from_pick_options),
+                pick_options=from_pick_options,
                 allow_roster_move=(tx_type == "MOVE"),
                 default_count=from_default,
             )
@@ -304,18 +353,15 @@ def render_transactions_tab(
 
             to_side_items = []
             if show_to_team:
-                to_pick_options = pick_domain_ids(data, to_team_id) if to_team_id is not None else []
+                to_pick_options = get_active_team_picks(to_team_id)
                 to_side_items = _render_side_items(
-                    side_label="Time B",
-                    prefix="to",
-                    team_name=to_team_name,
-                    team_id=to_team_id,
-                    data=data,
-                    player_lookup=player_lookup,
-                    pick_options=sorted(to_pick_options),
-                    allow_roster_move=False,
-                    default_count=1,
-                )
+                side_label="Time B",
+                prefix="to",
+                team_name=to_team_name,
+                team_id=to_team_id,
+                pick_options=to_pick_options,
+                allow_roster_move=False,
+                default_count=1,)
 
             if tx_type == "TRADE":
                 for row in to_side_items:
