@@ -7,7 +7,7 @@ CREATE TEMP TABLE IF NOT EXISTS current_rating_season (
 TRUNCATE current_rating_season;
 
 INSERT INTO current_rating_season (season)
-VALUES ('2026-27'); #alterar para a temporada desejada, ou usar uma subquery para pegar a temporada ativa do sistema.
+VALUES ('2026-27');
 
 
 CREATE TABLE IF NOT EXISTS fantasy_player_game_ratings (
