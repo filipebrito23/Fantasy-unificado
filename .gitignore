@@ -5,3 +5,4 @@ __pycache__/
 data/
 service_account.json
 Admin/
+Escala/.env
