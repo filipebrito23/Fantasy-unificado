@@ -157,7 +157,7 @@ with tab_players:
                     "jogador": "Jogador",
                     "time": "Time",
                     "rating": st.column_config.NumberColumn("Rating", format="%.2f"),
-                    "eficiencia": st.column_config.NumberColumn("EficiÃªncia", format="%.2f"),
+                    "eficiencia": st.column_config.NumberColumn("Eficiência", format="%.2f"),
                     "pts": "PTS",
                     "reb": "REB",
                     "ast": "AST",

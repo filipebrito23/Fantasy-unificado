@@ -460,7 +460,3 @@ def render_transactions_tab(
 
         display_tx = normalize_transaction_display_df(filtered_tx)
         st.dataframe(display_tx, use_container_width=True, hide_index=True)
-
-        with st.expander("Debug: transactions raw", expanded=False):
-            st.dataframe(data.get("transactions"), use_container_width=True, hide_index=True)
-            st.dataframe(data.get("transactionitems"), use_container_width=True, hide_index=True)
