@@ -1,5 +1,7 @@
 import pandas as pd
 import streamlit as st
+import io
+from datetime import datetime
 import time
 from app_lib.season_config import (
     ACTIVE_SEASON,
@@ -47,6 +49,99 @@ def load_current_data():
     atual da página, alterando somente a origem dos dados: Excel -> Neon.
     """
     return cached_load()
+
+def build_teams_workbook(
+    team_name: str,
+    start_season: str,
+    main_summary: dict,
+    main_roster: pd.DataFrame,
+    dev_roster: pd.DataFrame,
+    picks_display: pd.DataFrame,
+    main_totals: pd.DataFrame,
+    dev_totals: pd.DataFrame,
+    transactions_df: pd.DataFrame,
+    cap_remaining: float,
+    cap_status: str,
+    total_picks: int,
+) -> bytes:
+    buffer = io.BytesIO()
+
+    summary_df = pd.DataFrame(
+        [
+            {
+                "Time": team_name,
+                "Temporada inicial": start_season,
+                "Salários MAIN": main_summary.get(
+                    "Salários",
+                    0.0,
+                ),
+                "Disponível": main_summary.get(
+                    "Disponível",
+                    0.0,
+                ),
+                "Cap restante": cap_remaining,
+                "Status do cap": cap_status,
+                "Picks": total_picks,
+                "Gerado em": datetime.now().strftime(
+                    "%d/%m/%Y %H:%M"
+                ),
+            }
+        ]
+    )
+
+    with pd.ExcelWriter(
+        buffer,
+        engine="openpyxl",
+    ) as writer:
+        summary_df.to_excel(
+            writer,
+            sheet_name="Resumo",
+            index=False,
+        )
+
+        main_roster.to_excel(
+            writer,
+            sheet_name="MAIN",
+            index=False,
+        )
+
+        dev_roster.to_excel(
+            writer,
+            sheet_name="DEV",
+            index=False,
+        )
+
+        if not picks_display.empty:
+            picks_display.to_excel(
+                writer,
+                sheet_name="Picks",
+                index=False,
+            )
+
+        if not main_totals.empty:
+            main_totals.to_excel(
+                writer,
+                sheet_name="Totais MAIN",
+                index=False,
+            )
+
+        if not dev_totals.empty:
+            dev_totals.to_excel(
+                writer,
+                sheet_name="Totais DEV",
+                index=False,
+            )
+
+        if not transactions_df.empty:
+            transactions_df.to_excel(
+                writer,
+                sheet_name="Transações",
+                index=False,
+            )
+
+    buffer.seek(0)
+
+    return buffer.getvalue()
 
 
 user = require_login_v5()
@@ -203,7 +298,70 @@ with row2[3]:
     render_summary_card("Disponível", currency(disponivel))
 
 
-st.caption(f"Status do cap: {cap_status}")
+status_col, export_col = st.columns([4, 1])
+
+with status_col:
+    st.caption(f"Status do cap: {cap_status}")
+
+with export_col:
+    export_clicked = st.button(
+        "📥 Gerar Excel",
+        use_container_width=True,
+        key="teams_export_button",
+    )
+
+if export_clicked:
+    safe_team_name = (
+        "".join(
+            char
+            if char.isalnum() or char in " -_"
+            else "_"
+            for char in selected_team_name
+        )
+        .strip()
+        .replace(" ", "_")
+    )
+
+    st.session_state["teams_export_bytes"] = (
+        build_teams_workbook(
+            team_name=selected_team_name,
+            start_season=SEASON_LABELS[
+                selected_start_season
+            ],
+            main_summary=main_summary,
+            main_roster=ctx["main_roster_raw"],
+            dev_roster=ctx["dev_roster_raw"],
+            picks_display=ctx["picks_display"],
+            main_totals=ctx["main_totals"],
+            dev_totals=ctx["dev_totals"],
+            transactions_df=ctx[
+                "team_transactions_df"
+            ],
+            cap_remaining=cap_remaining,
+            cap_status=cap_status,
+            total_picks=total_picks,
+        )
+    )
+
+    st.session_state["teams_export_name"] = (
+        f"elencos_{safe_team_name}_"
+        f"{datetime.now():%Y%m%d_%H%M}.xlsx"
+    )
+
+if "teams_export_bytes" in st.session_state:
+    st.download_button(
+        label="⬇️ Baixar planilha",
+        data=st.session_state["teams_export_bytes"],
+        file_name=st.session_state[
+            "teams_export_name"
+        ],
+        mime=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+        key="teams_download_button",
+    )
+
 st.divider()
 
 
