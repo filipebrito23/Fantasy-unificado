@@ -6,3 +6,4 @@ data/
 service_account.json
 Admin/
 Escala/.env
+Escala/secret.toml
