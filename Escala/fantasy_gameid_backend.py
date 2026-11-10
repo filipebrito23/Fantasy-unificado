@@ -6,18 +6,19 @@ from pathlib import Path
 import gspread
 import pandas as pd
 import psycopg2
+import streamlit as st
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 
-load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-SERVICE_ACCOUNT_FILE = Path(__file__).resolve().parent / "service_account.json"
+load_dotenv()
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+SERVICE_ACCOUNT_FILE = Path(__file__).resolve().parent / "service_account.json"
 
 COLUNA_GAMEID = "GameID"
 COLUNA_JOGADOR = "Jogadores"
@@ -27,32 +28,68 @@ def normalizar_url_psycopg2(url):
     return url.replace("postgresql+psycopg2://", "postgresql://")
 
 
+def obter_database_url():
+    if "DATABASE_URL" in st.secrets:
+        return st.secrets["DATABASE_URL"]
+
+    url = os.getenv("DATABASE_URL")
+
+    if not url:
+        raise ValueError(
+            "DATABASE_URL não encontrada. "
+            "Configure em st.secrets ou no arquivo .env."
+        )
+
+    return url
+
+
 def extrair_spreadsheet_id(link):
     match = re.search(r"/d/([a-zA-Z0-9-_]+)", link)
+
     if match:
         return match.group(1)
 
     match = re.search(r"key=([a-zA-Z0-9-_]+)", link)
+
     if match:
         return match.group(1)
 
     raise ValueError("Não foi possível extrair o Spreadsheet ID do link.")
 
 
-def conectar_gsheets():
-    if not SERVICE_ACCOUNT_FILE.exists():
-        raise FileNotFoundError("service_account.json não encontrado.")
+def obter_credenciais_google():
+    if SERVICE_ACCOUNT_FILE.exists():
+        return Credentials.from_service_account_file(
+            str(SERVICE_ACCOUNT_FILE),
+            scopes=SCOPES
+        )
 
-    creds = Credentials.from_service_account_file(
-        str(SERVICE_ACCOUNT_FILE),
-        scopes=SCOPES
+    if "gcp_service_account" in st.secrets:
+        info = dict(st.secrets["gcp_service_account"])
+
+        return Credentials.from_service_account_info(
+            info,
+            scopes=SCOPES
+        )
+
+    raise FileNotFoundError(
+        "Credenciais do Google não encontradas. "
+        "Use service_account.json localmente ou "
+        "st.secrets['gcp_service_account'] no Streamlit Cloud."
     )
 
-    return gspread.authorize(creds)
+
+def conectar_gsheets():
+    creds = obter_credenciais_google()
+    client = gspread.authorize(creds)
+    return client
 
 
 def carregar_calendario():
-    conn = psycopg2.connect(normalizar_url_psycopg2(DATABASE_URL))
+    conn = psycopg2.connect(
+        normalizar_url_psycopg2(obter_database_url())
+    )
+
     cur = conn.cursor()
 
     cur.execute("""
@@ -96,10 +133,10 @@ def achar_gameid(calendario, nba_team, semana, jogo_semana):
     if chave in calendario:
         return calendario[chave]
 
-    # Regra: se o time tiver só 2 jogos, o jogo 3 usa o último disponível
     if jogo_semana == 3:
         for fallback in (2, 1):
             chave_fallback = (nba_team, semana, fallback)
+
             if chave_fallback in calendario:
                 return calendario[chave_fallback]
 
@@ -107,7 +144,10 @@ def achar_gameid(calendario, nba_team, semana, jogo_semana):
 
 
 def obter_mapa_jogador_time():
-    conn = psycopg2.connect(normalizar_url_psycopg2(DATABASE_URL))
+    conn = psycopg2.connect(
+        normalizar_url_psycopg2(obter_database_url())
+    )
+
     cur = conn.cursor()
 
     cur.execute("""
@@ -144,9 +184,11 @@ def normalizar_nome(nome):
 
 def a1_col(col_num):
     result = ""
+
     while col_num > 0:
         col_num, remainder = divmod(col_num - 1, 26)
         result = chr(65 + remainder) + result
+
     return result
 
 
@@ -191,7 +233,10 @@ def processar_planilha(spreadsheet_id, semana, jogo_semana):
         preenchidos = 0
         nao_encontrados = 0
 
-        for i, row in enumerate(all_values[header_row_idx + 1:], start=header_row_idx + 2):
+        for i, row in enumerate(
+            all_values[header_row_idx + 1:],
+            start=header_row_idx + 2
+        ):
             if len(row) <= max(idx_jogador, idx_gameid) - 1:
                 continue
 
@@ -204,7 +249,9 @@ def processar_planilha(spreadsheet_id, semana, jogo_semana):
             if gameid_atual:
                 continue
 
-            nba_team = mapa_jogador_time.get(normalizar_nome(jogador))
+            nba_team = mapa_jogador_time.get(
+                normalizar_nome(jogador)
+            )
 
             if not nba_team:
                 nao_encontrados += 1
@@ -240,34 +287,3 @@ def processar_planilha(spreadsheet_id, semana, jogo_semana):
         })
 
     return resumo
-
-
-def main():
-    print("=== Preencher GameID por semana e jogo da semana ===")
-
-    link = input("Cole o link da planilha: ").strip()
-    semana = int(input("Digite o número da semana: ").strip())
-    jogo_semana = int(input("Digite o número do jogo na semana (1, 2 ou 3): ").strip())
-
-    if jogo_semana not in (1, 2, 3):
-        raise ValueError("O número do jogo na semana deve ser 1, 2 ou 3.")
-
-    spreadsheet_id = extrair_spreadsheet_id(link)
-
-    print(f"\nPlanilha: {spreadsheet_id}")
-    print(f"Semana: {semana}")
-    print(f"Jogo na semana: {jogo_semana}")
-
-    resumo = processar_planilha(
-        spreadsheet_id,
-        semana,
-        jogo_semana
-    )
-
-    print("\nRESUMO:")
-    for item in resumo:
-        print(item)
-
-
-if __name__ == "__main__":
-    main()

@@ -1,0 +1,5 @@
+quando rodar, rodar assim:
+
+python import_only_stats.py --start-round 7 --end-round 9
+
+python nome_do_script.py para importar a temporada toda

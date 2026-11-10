@@ -9,10 +9,16 @@ Regra de importação:
   estatístico preenchido na planilha.
 - Jogadores individuais podem ter estatísticas zeradas.
 - Não cria, atualiza ou exclui jogos em fantasy_games.
+
+Uso:
+    python nome_do_script.py
+    python nome_do_script.py --start-round 7 --end-round 9
+    python nome_do_script.py --start-round 10 --end-round 10
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import time
 import unicodedata
@@ -59,22 +65,21 @@ STAT_COLUMNS = [
 MAX_RETRIES = 3
 RETRY_DELAY = 5
 
-# Mapeamento das siglas presentes no título de cada aba para os IDs do Neon.
 SIGLA_TO_TEAM_ID = {
-    "ABB": 1,   # Alabama Black Bears
-    "FRC": 2,   # Franca Celtics
-    "GUA": 3,   # Guarulhos Nuggets
-    "IRB": 4,   # Itajubá Rabbits
-    "KDG": 5,   # Kaipiras da Gema
-    "MIB": 6,   # Miami Barons
-    "MNT": 7,   # Montreal Turtles
-    "NOD": 8,   # New Orleans Dancers
-    "OSA": 9,   # Osasco Heat
-    "PVK": 10,  # Pelotas Vikings
-    "PER": 11,  # Pernambuco Pharynx
-    "RBD": 12,  # Recife Black Diamond
-    "RBM": 13,  # RJ Black Mamba
-    "TCH": 14,  # Tchêltics da Peleia
+    "ABB": 1,
+    "FRC": 2,
+    "GUA": 3,
+    "IRB": 4,
+    "KDG": 5,
+    "MIB": 6,
+    "MNT": 7,
+    "NOD": 8,
+    "OSA": 9,
+    "PVK": 10,
+    "PER": 11,
+    "RBD": 12,
+    "RBM": 13,
+    "TCH": 14,
 }
 
 
@@ -143,7 +148,11 @@ def get_team_sigla_from_aba(aba_name: str, team_position: str) -> str:
     parts = aba_name.split(" x ")
 
     if len(parts) == 2:
-        return parts[0].strip().upper() if team_position == "A" else parts[1].strip().upper()
+        return (
+            parts[0].strip().upper()
+            if team_position == "A"
+            else parts[1].strip().upper()
+        )
 
     return aba_name.strip().upper()
 
@@ -156,9 +165,6 @@ def get_fantasy_game_id_by_teams(
 ) -> int | None:
     """
     Busca fantasy_game_id por rodada e time IDs, aceitando qualquer ordem.
-
-    Assim funciona tanto para uma aba 'KDG x TCH' quanto para um jogo
-    cadastrado no banco como 'TCH x KDG'.
     """
     result = conn.execute(
         text(
@@ -182,14 +188,20 @@ def get_fantasy_game_id_by_teams(
 
     row = result.fetchone()
 
-    if row:
-        return int(row[0])
-
-    return None
+    return int(row[0]) if row else None
 
 
-def get_player_source_id(player_name: str, conn) -> int | None:
-    """Busca source_player_id pelo nome do jogador."""
+def get_player_source_id(
+    player_name: str,
+    conn,
+    cache: dict[str, int | None] | None = None,
+) -> int | None:
+    """Busca source_player_id pelo nome do jogador, com cache opcional."""
+    key = player_name.strip()
+
+    if cache is not None and key in cache:
+        return cache[key]
+
     result = conn.execute(
         text(
             """
@@ -199,18 +211,20 @@ def get_player_source_id(player_name: str, conn) -> int | None:
             LIMIT 1
             """
         ),
-        {"player_name": player_name.strip()},
+        {"player_name": key},
     )
 
     row = result.fetchone()
+    value = int(row[0]) if row else None
 
-    return int(row[0]) if row else None
+    if cache is not None:
+        cache[key] = value
+
+    return value
 
 
 def parse_stat_value(value: object) -> float:
-    """
-    Converte valores como '15', '53,5', '53.5' e strings vazias para float.
-    """
+    """Converte '15', '53,5', '53.5' e vazio para float."""
     raw_value = str(value or "").strip()
 
     if not raw_value:
@@ -241,16 +255,7 @@ def map_header_columns(headers: list) -> dict[str, int]:
 
 
 def has_stat_cell_filled(row: list, col_indices: dict[str, int]) -> bool:
-    """
-    Verifica se pelo menos uma célula de estatística foi preenchida.
-
-    A checagem é feita pelo conteúdo da célula, antes de converter em número.
-    Portanto:
-    - célula vazia não conta;
-    - '0' conta como preenchido;
-    - um atleta zerado é válido;
-    - um time inteiro sem nenhum campo preenchido é considerado incompleto.
-    """
+    """Verifica se pelo menos uma célula de estatística foi preenchida."""
     for stat_name in STAT_COLUMNS:
         column_index = col_indices.get(stat_name)
 
@@ -269,16 +274,13 @@ def parse_team_data(
     col_indices: dict[str, int],
     conn,
     team_id: int,
+    player_cache: dict[str, int | None] | None = None,
 ) -> tuple[list[dict], bool]:
     """
     Faz o parse das seis linhas de jogadores de um time.
 
-    Retorna:
-    - lista de jogadores reconhecidos no banco;
-    - True/False indicando se havia pelo menos algum preenchimento de stats
-      na planilha para aquele time.
-
-    O segundo retorno não depende de o jogador ter sido encontrado no banco.
+    Retorna a lista de jogadores reconhecidos e um booleano indicando se
+    havia pelo menos algum preenchimento de stats para aquele time.
     """
     players = []
     team_has_filled_stats = False
@@ -318,7 +320,11 @@ def parse_team_data(
             else:
                 stats[stat_name] = parse_stat_value(row[col_idx])
 
-        source_player_id = get_player_source_id(player_name, conn)
+        source_player_id = get_player_source_id(
+            player_name,
+            conn,
+            cache=player_cache,
+        )
 
         if source_player_id is None:
             print(f"      Jogador não encontrado: {player_name}")
@@ -406,11 +412,7 @@ def upsert_game_stat(
     team_id: int,
     stats: dict,
 ) -> str:
-    """
-    Insere ou atualiza a estatística de um jogador em um confronto.
-
-    Retorna 'inserted' ou 'updated'.
-    """
+    """Insere ou atualiza a estatística de um jogador em um confronto."""
     existing_stat = conn.execute(
         text(
             """
@@ -508,7 +510,10 @@ def upsert_game_stat(
 # IMPORTAÇÃO
 # ============================================================================
 
-def import_only_stats() -> None:
+def import_only_stats(
+    start_round: int | None = None,
+    end_round: int | None = None,
+) -> None:
     print("Autenticando com Google Sheets API...")
 
     creds = service_account.Credentials.from_service_account_file(
@@ -520,6 +525,31 @@ def import_only_stats() -> None:
 
     urls_data = parse_urls_file(URLS_FILE)
 
+    if start_round is not None or end_round is not None:
+        filtered_urls = []
+
+        for url_info in urls_data:
+            round_num = get_round_number(url_info["rodada"])
+
+            if start_round is not None and round_num < start_round:
+                continue
+
+            if end_round is not None and round_num > end_round:
+                continue
+
+            filtered_urls.append(url_info)
+
+        urls_data = filtered_urls
+
+    urls_data.sort(key=lambda item: get_round_number(item["rodada"]))
+
+    if start_round is not None or end_round is not None:
+        print(
+            f"Filtrando rodadas de "
+            f"{start_round if start_round is not None else 'início'} "
+            f"a {end_round if end_round is not None else 'fim'}."
+        )
+
     print(f"Encontradas {len(urls_data)} planilhas para importar.\n")
 
     stats_inserted = 0
@@ -528,176 +558,222 @@ def import_only_stats() -> None:
     games_skipped_incomplete = 0
     players_not_found = 0
 
-    with engine.begin() as conn:
-        for url_info in urls_data:
-            rodada = url_info["rodada"]
-            spreadsheet_id = extract_spreadsheet_id(url_info["url"])
-            round_num = get_round_number(rodada)
+    player_cache: dict[str, int | None] = {}
 
-            print(f"Processando {rodada} ({spreadsheet_id})...")
+    for url_info in urls_data:
+        rodada = url_info["rodada"]
+        spreadsheet_id = extract_spreadsheet_id(url_info["url"])
+        round_num = get_round_number(rodada)
+
+        print(f"Processando {rodada} ({spreadsheet_id})...")
+
+        try:
+            spreadsheet = fetch_with_retry_metadata(service, spreadsheet_id)
+        except Exception as error:
+            print(f"  Erro ao obter metadata: {error}\n")
+            continue
+
+        sheets = spreadsheet.get("sheets", [])
+
+        if not sheets:
+            print("  Nenhum sheet encontrado. Pulando.\n")
+            continue
+
+        for sheet in sheets:
+            sheet_name = sheet["properties"]["title"]
+
+            print(f"  Processando aba: {sheet_name}")
+
+            if " x " not in sheet_name:
+                print("    Formato de aba inválido. Pulando.\n")
+                continue
+
+            team_a_sigla = get_team_sigla_from_aba(sheet_name, "A")
+            team_b_sigla = get_team_sigla_from_aba(sheet_name, "B")
+
+            team_a_id = SIGLA_TO_TEAM_ID.get(team_a_sigla)
+            team_b_id = SIGLA_TO_TEAM_ID.get(team_b_sigla)
+
+            if team_a_id is None or team_b_id is None:
+                print(
+                    f"    Sigla não mapeada: "
+                    f"{team_a_sigla} x {team_b_sigla}. Pulando.\n"
+                )
+                continue
+
+            range_name = f"'{sheet_name}'!A1:Z20"
 
             try:
-                spreadsheet = fetch_with_retry_metadata(service, spreadsheet_id)
+                values = fetch_with_retry(
+                    service,
+                    spreadsheet_id,
+                    range_name,
+                )
             except Exception as error:
-                print(f"  Erro ao obter metadata: {error}\n")
+                print(f"    Erro ao ler aba: {error}\n")
                 continue
 
-            sheets = spreadsheet.get("sheets", [])
-
-            if not sheets:
-                print("  Nenhum sheet encontrado. Pulando.\n")
+            if len(values) < 18:
+                games_skipped_incomplete += 1
+                print("    Estrutura incompleta. Jogo ignorado.\n")
                 continue
 
-            for sheet in sheets:
-                sheet_name = sheet["properties"]["title"]
+            headers_a = values[1] if len(values) > 1 else []
+            headers_b = values[11] if len(values) > 11 else []
 
-                print(f"  Processando aba: {sheet_name}")
+            col_indices_a = map_header_columns(headers_a)
+            col_indices_b = map_header_columns(headers_b)
 
-                if " x " not in sheet_name:
-                    print("    Formato de aba inválido. Pulando.\n")
-                    continue
+            required_columns = {"player_name", *STAT_COLUMNS}
 
-                team_a_sigla = get_team_sigla_from_aba(sheet_name, "A")
-                team_b_sigla = get_team_sigla_from_aba(sheet_name, "B")
+            missing_a = required_columns - set(col_indices_a)
+            missing_b = required_columns - set(col_indices_b)
 
-                team_a_id = SIGLA_TO_TEAM_ID.get(team_a_sigla)
-                team_b_id = SIGLA_TO_TEAM_ID.get(team_b_sigla)
-
-                if team_a_id is None or team_b_id is None:
-                    print(
-                        f"    Sigla não mapeada: "
-                        f"{team_a_sigla} x {team_b_sigla}. Pulando.\n"
-                    )
-                    continue
-
-                range_name = f"'{sheet_name}'!A1:Z20"
-
-                try:
-                    values = fetch_with_retry(
-                        service,
-                        spreadsheet_id,
-                        range_name,
-                    )
-                except Exception as error:
-                    print(f"    Erro ao ler aba: {error}\n")
-                    continue
-
-                if len(values) < 18:
-                    games_skipped_incomplete += 1
-                    print("    Estrutura incompleta. Jogo ignorado.\n")
-                    continue
-
-                headers_a = values[1] if len(values) > 1 else []
-                headers_b = values[11] if len(values) > 11 else []
-
-                col_indices_a = map_header_columns(headers_a)
-                col_indices_b = map_header_columns(headers_b)
-
-                required_columns = {"player_name", *STAT_COLUMNS}
-
-                missing_a = required_columns - set(col_indices_a)
-                missing_b = required_columns - set(col_indices_b)
-
-                if missing_a or missing_b:
-                    print(
-                        "    Cabeçalhos obrigatórios não encontrados. "
-                        f"Time A faltando: {sorted(missing_a)}; "
-                        f"Time B faltando: {sorted(missing_b)}. Pulando.\n"
-                    )
-                    continue
-
-                team_a_players, team_a_has_filled_stats = parse_team_data(
-                    values=values,
-                    start_row=2,
-                    col_indices=col_indices_a,
-                    conn=conn,
-                    team_id=team_a_id,
-                )
-
-                team_b_players, team_b_has_filled_stats = parse_team_data(
-                    values=values,
-                    start_row=12,
-                    col_indices=col_indices_b,
-                    conn=conn,
-                    team_id=team_b_id,
-                )
-
-                # O confronto só entra no banco quando os dois lados têm dados.
-                if not team_a_has_filled_stats or not team_b_has_filled_stats:
-                    games_skipped_incomplete += 1
-
-                    if not team_a_has_filled_stats and not team_b_has_filled_stats:
-                        reason = "ambos os times estão sem stats preenchidas"
-                    elif not team_a_has_filled_stats:
-                        reason = f"{team_a_sigla} está sem stats preenchidas"
-                    else:
-                        reason = f"{team_b_sigla} está sem stats preenchidas"
-
-                    print(
-                        f"    Jogo não realizado ou incompleto: {reason}. "
-                        "Nenhuma stat foi gravada.\n"
-                    )
-                    continue
-
-                if not team_a_players or not team_b_players:
-                    games_skipped_incomplete += 1
-                    print(
-                        "    Dados encontrados na planilha, mas não houve jogadores "
-                        "reconhecidos nos dois lados. Nenhuma stat foi gravada.\n"
-                    )
-                    continue
-
-                fantasy_game_id = get_fantasy_game_id_by_teams(
-                    round_num=round_num,
-                    team_a_id=team_a_id,
-                    team_b_id=team_b_id,
-                    conn=conn,
-                )
-
-                if fantasy_game_id is None:
-                    games_not_found += 1
-                    print(
-                        f"    Jogo não encontrado em fantasy_games "
-                        f"(rodada={round_num}, times={team_a_id} x {team_b_id}). "
-                        "Pulando.\n"
-                    )
-                    continue
-
+            if missing_a or missing_b:
                 print(
-                    f"    Jogo encontrado: ID={fantasy_game_id} "
-                    f"({team_a_sigla} x {team_b_sigla})"
+                    "    Cabeçalhos obrigatórios não encontrados. "
+                    f"Time A faltando: {sorted(missing_a)}; "
+                    f"Time B faltando: {sorted(missing_b)}. Pulando.\n"
                 )
+                continue
 
-                processed_players = 0
-
-                for player in team_a_players + team_b_players:
-                    action = upsert_game_stat(
+            try:
+                # Cada jogo é commitado separadamente.
+                with engine.begin() as conn:
+                    team_a_players, team_a_has_filled_stats = parse_team_data(
+                        values=values,
+                        start_row=2,
+                        col_indices=col_indices_a,
                         conn=conn,
-                        fantasy_game_id=fantasy_game_id,
-                        source_player_id=player["source_player_id"],
-                        team_id=player["team_id"],
-                        stats=player["stats"],
+                        team_id=team_a_id,
+                        player_cache=player_cache,
                     )
 
-                    if action == "inserted":
-                        stats_inserted += 1
-                    else:
-                        stats_updated += 1
+                    team_b_players, team_b_has_filled_stats = parse_team_data(
+                        values=values,
+                        start_row=12,
+                        col_indices=col_indices_b,
+                        conn=conn,
+                        team_id=team_b_id,
+                        player_cache=player_cache,
+                    )
 
-                    processed_players += 1
+                    if (
+                        not team_a_has_filled_stats
+                        or not team_b_has_filled_stats
+                    ):
+                        games_skipped_incomplete += 1
 
+                        if (
+                            not team_a_has_filled_stats
+                            and not team_b_has_filled_stats
+                        ):
+                            reason = "ambos os times estão sem stats preenchidas"
+                        elif not team_a_has_filled_stats:
+                            reason = f"{team_a_sigla} está sem stats preenchidas"
+                        else:
+                            reason = f"{team_b_sigla} está sem stats preenchidas"
+
+                        print(
+                            f"    Jogo não realizado ou incompleto: {reason}. "
+                            "Nenhuma stat foi gravada.\n"
+                        )
+                        continue
+
+                    if not team_a_players or not team_b_players:
+                        games_skipped_incomplete += 1
+                        print(
+                            "    Dados encontrados na planilha, mas não houve "
+                            "jogadores reconhecidos nos dois lados. "
+                            "Nenhuma stat foi gravada.\n"
+                        )
+                        continue
+
+                    fantasy_game_id = get_fantasy_game_id_by_teams(
+                        round_num=round_num,
+                        team_a_id=team_a_id,
+                        team_b_id=team_b_id,
+                        conn=conn,
+                    )
+
+                    if fantasy_game_id is None:
+                        games_not_found += 1
+                        print(
+                            "    Jogo não encontrado em fantasy_games "
+                            f"(rodada={round_num}, "
+                            f"times={team_a_id} x {team_b_id}). Pulando.\n"
+                        )
+                        continue
+
+                    print(
+                        f"    Jogo encontrado: ID={fantasy_game_id} "
+                        f"({team_a_sigla} x {team_b_sigla})"
+                    )
+
+                    processed_players = 0
+
+                    for player in team_a_players + team_b_players:
+                        action = upsert_game_stat(
+                            conn=conn,
+                            fantasy_game_id=fantasy_game_id,
+                            source_player_id=player["source_player_id"],
+                            team_id=player["team_id"],
+                            stats=player["stats"],
+                        )
+
+                        if action == "inserted":
+                            stats_inserted += 1
+                        else:
+                            stats_updated += 1
+
+                        processed_players += 1
+
+                    print(
+                        f"    {processed_players} jogadores "
+                        "inseridos/atualizados.\n"
+                    )
+
+            except Exception as error:
                 print(
-                    f"    {processed_players} jogadores inseridos/atualizados.\n"
+                    f"    Erro ao gravar a aba {sheet_name}: {error}. "
+                    "Jogo ignorado.\n"
                 )
+                continue
 
     print("=" * 60)
     print("Importação concluída!")
     print(f"  Stats inseridos: {stats_inserted}")
     print(f"  Stats atualizados: {stats_updated}")
-    print(f"  Jogos ignorados (vazios/incompletos): {games_skipped_incomplete}")
+    print(
+        "  Jogos ignorados (vazios/incompletos): "
+        f"{games_skipped_incomplete}"
+    )
     print(f"  Jogos não encontrados: {games_not_found}")
     print(f"  Jogadores não encontrados: {players_not_found}")
 
 
 if __name__ == "__main__":
-    import_only_stats()
+    parser = argparse.ArgumentParser(
+        description="Importa estatísticas de jogadores do Google Sheets."
+    )
+
+    parser.add_argument(
+        "--start-round",
+        type=int,
+        default=None,
+        help="Primeira rodada a importar, por exemplo 7.",
+    )
+
+    parser.add_argument(
+        "--end-round",
+        type=int,
+        default=None,
+        help="Última rodada a importar, por exemplo 9.",
+    )
+
+    args = parser.parse_args()
+
+    import_only_stats(
+        start_round=args.start_round,
+        end_round=args.end_round,
+    )
