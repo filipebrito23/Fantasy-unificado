@@ -1,2 +1,0 @@
-Rodar gameid.py (cola o link do local do drive, numero da semana e qual jogo da semana)
-Rodar escala.py (só 1x ou 2 na temporada) - esse arquivo relaciona os jogadores com seus times (atraves de team_abb)
